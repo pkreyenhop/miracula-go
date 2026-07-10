@@ -7,8 +7,10 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
+	"unsafe"
 )
 
 // ==========================================================================
@@ -2564,21 +2566,193 @@ func tokenToString(t Token) string {
 // 11. MAIN ENTRYPOINT
 // ==========================================================================
 
-func runREPLDirect(env *Env, scriptFile string) {
-	scanner := bufio.NewScanner(os.Stdin)
+func isTTY() bool {
+	cmd := exec.Command("stty", "-g")
+	cmd.Stdin = os.Stdin
+	err := cmd.Run()
+	return err == nil
+}
+
+func pendingBytes() int {
+	var limit int
+	_, _, err := syscall.Syscall(
+		syscall.SYS_IOCTL,
+		uintptr(0), // stdin fd
+		uintptr(0x541b), // FIONREAD / TIOCINQ ioctl code on Linux
+		uintptr(unsafe.Pointer(&limit)),
+	)
+	if err != 0 {
+		return 0
+	}
+	return limit
+}
+
+func hasMore(r *bufio.Reader) bool {
+	if r.Buffered() > 0 {
+		return true
+	}
+	return pendingBytes() > 0
+}
+
+func readLine(prompt string, history []string) (string, []string, bool) {
+	cmd := exec.Command("stty", "raw", "-echo")
+	cmd.Stdin = os.Stdin
+	_ = cmd.Run()
+
+	defer func() {
+		restoreCmd := exec.Command("stty", "-raw", "echo")
+		restoreCmd.Stdin = os.Stdin
+		_ = restoreCmd.Run()
+	}()
+
+	var buf []rune
+	cursor := 0
+	historyIdx := len(history)
+	var draft []rune
+
+	fmt.Print(prompt)
+	reader := bufio.NewReader(os.Stdin)
+
 	for {
-		fmt.Print("miranda> ")
-		if !scanner.Scan() {
-			fmt.Println("Goodbye.")
-			break
+		r, _, err := reader.ReadRune()
+		if err != nil {
+			return "", history, false
 		}
-		line := scanner.Text()
+
+		switch r {
+		case 3: // Ctrl-C
+			fmt.Print("\r\n")
+			return "", history, true
+		case 4: // Ctrl-D
+			if len(buf) == 0 {
+				fmt.Print("\r\n")
+				return "", history, false
+			}
+			if cursor < len(buf) {
+				buf = append(buf[:cursor], buf[cursor+1:]...)
+			}
+		case 1: // Ctrl-A
+			cursor = 0
+		case 5: // Ctrl-E
+			cursor = len(buf)
+		case 11: // Ctrl-K
+			buf = buf[:cursor]
+		case 13, 10: // Enter
+			fmt.Print("\r\n")
+			line := string(buf)
+			if len(line) > 0 && (len(history) == 0 || history[len(history)-1] != line) {
+				history = append(history, line)
+			}
+			return line, history, true
+		case 8, 127: // Backspace
+			if cursor > 0 {
+				buf = append(buf[:cursor-1], buf[cursor:]...)
+				cursor--
+			}
+		case 27: // Escape
+			if hasMore(reader) {
+				r2, _, _ := reader.ReadRune()
+				if r2 == '[' {
+					r3, _, _ := reader.ReadRune()
+					switch r3 {
+					case 'A': // Up Arrow
+						if historyIdx > 0 {
+							if historyIdx == len(history) {
+								draft = append([]rune(nil), buf...)
+							}
+							historyIdx--
+							buf = []rune(history[historyIdx])
+							cursor = len(buf)
+						}
+					case 'B': // Down Arrow
+						if historyIdx < len(history) {
+							historyIdx++
+							if historyIdx == len(history) {
+								buf = append([]rune(nil), draft...)
+							} else {
+								buf = []rune(history[historyIdx])
+							}
+							cursor = len(buf)
+						}
+					case 'C': // Right Arrow
+						if cursor < len(buf) {
+							cursor++
+						}
+					case 'D': // Left Arrow
+						if cursor > 0 {
+							cursor--
+						}
+					case 'H': // Home
+						cursor = 0
+					case 'F': // End
+						cursor = len(buf)
+					case '1', '2', '3', '4', '5', '6', '7', '8', '9':
+						r4, _, _ := reader.ReadRune()
+						if r4 == '~' {
+							if r3 == '3' { // Delete
+								if cursor < len(buf) {
+									buf = append(buf[:cursor], buf[cursor+1:]...)
+								}
+							}
+						}
+					}
+				} else if r2 == 'O' {
+					r3, _, _ := reader.ReadRune()
+					switch r3 {
+					case 'H': // Home
+						cursor = 0
+					case 'F': // End
+						cursor = len(buf)
+					}
+				}
+			}
+		default:
+			if r >= 32 {
+				buf = append(buf[:cursor], append([]rune{r}, buf[cursor:]...)...)
+				cursor++
+			}
+		}
+
+		fmt.Printf("\r%s%s\x1b[K\r\x1b[%dG", prompt, string(buf), len(prompt)+cursor+1)
+	}
+}
+
+func runREPLDirect(env *Env, scriptFile string) {
+	interactive := isTTY()
+	var history []string
+	var scanner *bufio.Scanner
+	if !interactive {
+		scanner = bufio.NewScanner(os.Stdin)
+	}
+
+	for {
+		var line string
+		if interactive {
+			var ok bool
+			line, history, ok = readLine("miranda> ", history)
+			if !ok {
+				fmt.Println("Goodbye.")
+				break
+			}
+		} else {
+			fmt.Print("miranda> ")
+			if !scanner.Scan() {
+				fmt.Println("Goodbye.")
+				break
+			}
+			line = scanner.Text()
+		}
+
 		lineTrimmed := strings.TrimSpace(line)
 		if lineTrimmed == "" {
 			continue
 		}
 		if lineTrimmed == "/q" || lineTrimmed == "exit" || lineTrimmed == "quit" {
-			fmt.Println("Goodbye.")
+			if interactive {
+				// Goodbye already printed by readLine / Enter / EOF loop
+			} else {
+				fmt.Println("Goodbye.")
+			}
 			break
 		}
 		if lineTrimmed == "/e" {

@@ -9,8 +9,13 @@ Miracula is a lightweight interpreter and interactive REPL for a lazy functional
 - **List Pattern Matching & Desugaring:** Allows defining functions through multiple equations with pattern matching on integers, characters, variables, and list patterns (`[]` and `(x:xs)` cons patterns) compiled into conditional decision trees.
 - **Lazy List Ranges:** Dynamic sequence generators using `[e1..e2]` syntax (e.g., `[1..100]`), lazily evaluated step-by-step so that sequences are generated only as they are accessed.
 - **Interactive REPL:** Provides a prompt (`miranda> `) to define variables/functions and evaluate expressions interactively.
-  - **Enhanced Line Editing**: Basic editing via standard REPL input.
-  - `/e` command: Open and edit the loaded script file, reloading all definitions on exit.
+  - **Enhanced Line Editing & Navigation**:
+    - **Cursor Movement**: Left/Right arrow keys.
+    - **History Navigation**: Up/Down arrow keys (retains typed draft line when scrolling back to current input).
+    - **Go to Start/End**: `Ctrl-A` (or `Home`) and `Ctrl-E` (or `End`).
+    - **Delete/Kill**: `Ctrl-K` (kill to end of line), `Backspace` (delete backward), and `Delete` (delete under cursor).
+    - **Interrupt/Exit**: `Ctrl-C` to cancel current entry, and `Ctrl-D` (on empty line) or `/q` to exit the REPL.
+  - `/e` command: Open and edit the loaded script file in `vi`, reloading all definitions on exit.
   - `/q` command: Exit the REPL.
 
 ## Concrete Surface Syntax & AST
