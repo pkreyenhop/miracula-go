@@ -201,7 +201,7 @@ Evaluating `App (e1, e2)` under `whnf env`:
 
 ## 4. The Standard Prelude (Built-ins)
 
-Foundational functions are implemented in SML as built-ins or loaded from `stdenv.m`.
+Foundational functions are implemented in Go as built-ins or loaded from `stdenv.m`.
 
 ### 4.1 Built-in Primitives
 - **`hd list`**: Evaluates `list` to `Cons (h, t)` and returns `whnf env h`.
