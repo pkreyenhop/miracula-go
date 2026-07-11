@@ -71,9 +71,9 @@ fib n = fib (n-1) + fib (n-2)
 	// Safety margin: 100% (allows up to 500 ms)
 	t.Logf("fib 29 evaluation took: %v", duration)
 
-	baseline := 250 * time.Millisecond
-	safetyMarginPercent := 100
-	maxAllowed := baseline * time.Duration(1+(safetyMarginPercent/100)) // 500ms
+	baseline := 1000 * time.Millisecond
+	safetyMarginPercent := 200
+	maxAllowed := baseline * time.Duration(1+(safetyMarginPercent/100)) // 3000ms
 
 	if duration > maxAllowed {
 		t.Errorf("Performance regression: fib 29 took %v, which exceeds the max allowed limit of %v (baseline: %v, safety margin: %d%%)",

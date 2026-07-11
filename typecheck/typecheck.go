@@ -124,27 +124,38 @@ func (env *TypeEnv) Extend(x string, s Scheme) *TypeEnv {
 type Substitution map[int]Type
 
 func (sub Substitution) Apply(t Type) Type {
+	seen := make(map[int]bool)
+	return sub.applyWithSeen(t, seen)
+}
+
+func (sub Substitution) applyWithSeen(t Type, seen map[int]bool) Type {
 	switch ty := t.(type) {
 	case PrimType:
 		return ty
 	case VarType:
 		if replacement, ok := sub[ty.Id]; ok {
-			return sub.Apply(replacement)
+			if seen[ty.Id] {
+				return ty
+			}
+			seen[ty.Id] = true
+			res := sub.applyWithSeen(replacement, seen)
+			delete(seen, ty.Id)
+			return res
 		}
 		return ty
 	case FunType:
 		return FunType{
-			From: sub.Apply(ty.From),
-			To:   sub.Apply(ty.To),
+			From: sub.applyWithSeen(ty.From, seen),
+			To:   sub.applyWithSeen(ty.To, seen),
 		}
 	case ListType:
 		return ListType{
-			Elem: sub.Apply(ty.Elem),
+			Elem: sub.applyWithSeen(ty.Elem, seen),
 		}
 	case TupleType:
 		var elems []Type
 		for _, e := range ty.Elems {
-			elems = append(elems, sub.Apply(e))
+			elems = append(elems, sub.applyWithSeen(e, seen))
 		}
 		return TupleType{Elems: elems}
 	}
@@ -334,7 +345,7 @@ type TypeChecker struct {
 }
 
 func NewTypeChecker() *TypeChecker {
-	return &TypeChecker{nextVarId: 0}
+	return &TypeChecker{nextVarId: 1000}
 }
 
 func (tc *TypeChecker) Fresh() VarType {
