@@ -65,3 +65,42 @@ func TestDesugarEquations(t *testing.T) {
 		t.Errorf("Expected parameter variable to be 'p0', got %s", lam.Var)
 	}
 }
+
+func TestParseGuards(t *testing.T) {
+	toks := lexer.Tokenize("abs x = -x, if x < 0 = x, otherwise")
+	p := NewParser(toks)
+	stmt := p.Parse()
+
+	bind, ok := stmt.(ScriptBindStmt)
+	if !ok {
+		t.Fatalf("Expected ScriptBindStmt, got %T", stmt)
+	}
+
+	if bind.Binding.FName != "abs" {
+		t.Errorf("Expected FName 'abs', got %s", bind.Binding.FName)
+	}
+
+	// Body should be an IfNode (desugared guard)
+	ifNode, ok := bind.Binding.Body.(ast.IfNode)
+	if !ok {
+		t.Fatalf("Expected IfNode at body root, got %T", bind.Binding.Body)
+	}
+
+	// Condition of first branch should be LtNode: x < 0
+	_, ok = ifNode.Cond.(ast.LtNode)
+	if !ok {
+		t.Errorf("Expected condition of first branch to be LtNode, got %T", ifNode.Cond)
+	}
+
+	// Else branch should be another IfNode for otherwise
+	elseIfNode, ok := ifNode.Else.(ast.IfNode)
+	if !ok {
+		t.Fatalf("Expected IfNode in else branch, got %T", ifNode.Else)
+	}
+
+	// Condition of otherwise should be BoolNode{Val: true}
+	boolNode, ok := elseIfNode.Cond.(ast.BoolNode)
+	if !ok || !boolNode.Val {
+		t.Errorf("Expected BoolNode{Val: true} for otherwise, got %v", elseIfNode.Cond)
+	}
+}

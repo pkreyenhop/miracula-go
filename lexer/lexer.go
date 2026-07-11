@@ -444,8 +444,11 @@ func ApplyLayout(lines []LayoutLine) []Token {
 
 		currentLayout := stack[len(stack)-1]
 		if depth == 0 && indent == currentLayout && len(acc) > 0 && !justPushed {
-			semicolon := Token{Type: TOK_SEMICOLON, Line: acc[len(acc)-1].Line, Col: acc[len(acc)-1].Col}
-			acc = append(acc, semicolon)
+			startsWithWhere := len(lineToks) > 0 && lineToks[0].Type == TOK_WHERE
+			if !startsWithWhere {
+				semicolon := Token{Type: TOK_SEMICOLON, Line: acc[len(acc)-1].Line, Col: acc[len(acc)-1].Col}
+				acc = append(acc, semicolon)
+			}
 		}
 
 		if depth == 0 {

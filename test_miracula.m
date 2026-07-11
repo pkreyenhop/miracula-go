@@ -30,6 +30,45 @@ nestedWhere x = outcome
 || 4. Math & Guard Logic (Section 3.3)
 absVal x = if x < 0 then 0 - x else x
 
+|| Guard Desugaring Test Definitions
+abs x
+    = -x, if x < 0
+    = x, otherwise
+
+sign x
+    = -1, if x < 0
+    = 0, if x == 0
+    = 1, otherwise
+
+max a b
+    = a, if a >= b
+    = b, otherwise
+
+fact n
+    = 1, if n == 0
+    = n * fact (n - 1), otherwise
+
+classify x
+    = "small", if x < 10
+    = "medium", if x < 100
+
+LT = "LT"
+GT = "GT"
+EQ = "EQ"
+
+compare a b
+    = LT, if a < b
+    = GT, if a > b
+    = EQ, otherwise
+
+f x =
+    g x
+where
+    g y
+        = 0, if y < 0
+        = y, otherwise
+
+
 || 5. Function Composition Syntax (Section 5.1)
 addOne x     = x + 1
 multTwo x    = x * 2
@@ -97,7 +136,14 @@ runTests
   assert "Library: lines" (lines "abc\ndef\ng" == ["abc", "def", "g"]),
   assert "Library: numval" (numval "1234" == 1234),
   assert "Library: show num" (show 42 == "42"),
-  assert "Library: show tuple" (show (1, 2) == "(1,2)")
+  assert "Library: show tuple" (show (1, 2) == "(1,2)"),
+  assert "Guard: Test 1" (abs (-5) == 5 & abs 0 == 0 & abs 7 == 7),
+  assert "Guard: Test 2" (sign (-8) == -1 & sign 0 == 0 & sign 12 == 1),
+  assert "Guard: Test 3" (max 5 3 == 5 & max 2 9 == 9 & max 7 7 == 7),
+  assert "Guard: Test 4" (fact 0 == 1 & fact 1 == 1 & fact 5 == 120),
+  assert "Guard: Test 5" (classify 5 == "small" & classify 42 == "medium"),
+  assert "Guard: Test 6" (compare 1 2 == LT & compare 3 3 == EQ & compare 7 4 == GT),
+  assert "Guard: Test 7" (f (-3) == 0 & f 0 == 0 & f 12 == 12)
   ]
 
 || Count how many tests failed

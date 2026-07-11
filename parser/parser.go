@@ -109,6 +109,143 @@ func isAssignment(tokens []lexer.Token) bool {
 	return false
 }
 
+type guardedClause struct {
+	Expr ast.Node
+	Cond ast.Node
+}
+
+func (p *Parser) parseRHS() ast.Node {
+	if p.peek().Type != lexer.TOK_ASSIGN {
+		p.errorf("expected '='")
+	}
+	p.consume() // '='
+
+	expr := p.parseExpr()
+
+	var body ast.Node
+	// Check if the equation is guarded.
+	// A guarded equation RHS has a comma followed by 'if' or 'otherwise'.
+	if p.peek().Type == lexer.TOK_COMMA && (p.peek2().Type == lexer.TOK_IF || (p.peek2().Type == lexer.TOK_VAR && p.peek2().Str == "otherwise")) {
+		// Yes, it is guarded!
+		var clauses []guardedClause
+
+		// Parse the first guard
+		p.consume() // ','
+		var cond ast.Node
+		if p.peek().Type == lexer.TOK_IF {
+			p.consume() // 'if'
+			cond = p.parseExpr()
+		} else {
+			p.consume() // 'otherwise'
+			cond = ast.BoolNode{Val: true}
+		}
+		clauses = append(clauses, guardedClause{Expr: expr, Cond: cond})
+
+		// Parse subsequent clauses starting with '='
+		for p.peek().Type == lexer.TOK_ASSIGN {
+			p.consume() // '='
+			nextExpr := p.parseExpr()
+			if p.peek().Type != lexer.TOK_COMMA {
+				p.errorf("expected ',' after expression in guarded clause")
+			}
+			p.consume() // ','
+			var nextCond ast.Node
+			if p.peek().Type == lexer.TOK_IF {
+				p.consume() // 'if'
+				nextCond = p.parseExpr()
+			} else if p.peek().Type == lexer.TOK_VAR && p.peek().Str == "otherwise" {
+				p.consume() // 'otherwise'
+				nextCond = ast.BoolNode{Val: true}
+			} else {
+				p.errorf("expected 'if' or 'otherwise' after ',' in guarded clause")
+			}
+			clauses = append(clauses, guardedClause{Expr: nextExpr, Cond: nextCond})
+		}
+
+		// Desugar the clauses into nested IfNode / MatchErrorNode
+		var desugared ast.Node = ast.MatchErrorNode{}
+		for i := len(clauses) - 1; i >= 0; i-- {
+			desugared = ast.IfNode{
+				Cond: clauses[i].Cond,
+				Then: clauses[i].Expr,
+				Else: desugared,
+			}
+		}
+		body = desugared
+	} else {
+		// Normal equation
+		body = expr
+	}
+
+	// Parse optional trailing 'where' clause for the entire RHS
+	if p.peek().Type == lexer.TOK_WHERE {
+		p.consume()
+		if p.peek().Type != lexer.TOK_LBRACE {
+			p.errorf("expected '{' after 'where'")
+		}
+		p.consume()
+
+		var parseBindings func() []RawBinding
+		parseBindings = func() []RawBinding {
+			if p.peek().Type == lexer.TOK_RBRACE {
+				p.consume()
+				return nil
+			}
+			if isAssignment(p.tokens[p.pos:]) {
+				nameTok := p.peek()
+				if nameTok.Type != lexer.TOK_VAR {
+					p.errorf("left hand side of local binding must start with an identifier")
+				}
+				p.consume()
+				var pats []ast.Pat
+				for p.peek().Type != lexer.TOK_ASSIGN {
+					pats = append(pats, p.parsePattern())
+				}
+				
+				// Parse the RHS of the local binding recursively
+				localBody := p.parseRHS()
+				b := RawBinding{FName: nameTok.Str, Pats: pats, Body: localBody}
+
+				var rest []RawBinding
+				if p.peek().Type == lexer.TOK_SEMICOLON {
+					p.consume()
+					rest = parseBindings()
+				} else if p.peek().Type == lexer.TOK_RBRACE {
+					p.consume()
+				} else {
+					p.errorf("expected ';' or '}' in where bindings")
+				}
+				return append([]RawBinding{b}, rest...)
+			} else {
+				p.errorf("expected local binding in where clause")
+				return nil
+			}
+		}
+
+		bs := parseBindings()
+		grouped := make(map[string][]RawBinding)
+		var order []string
+		for _, b := range bs {
+			if _, ok := grouped[b.FName]; !ok {
+				order = append(order, b.FName)
+			}
+			grouped[b.FName] = append(grouped[b.FName], b)
+		}
+
+		var desugared []ast.Binding
+		for _, name := range order {
+			eqList := grouped[name]
+			desugared = append(desugared, ast.Binding{
+				Name: name,
+				Expr: DesugarEquations(eqList),
+			})
+		}
+		return ast.LetNode{Bindings: desugared, Body: body}
+	}
+
+	return body
+}
+
 func (p *Parser) Parse() Stmt {
 	if isAssignment(p.tokens[p.pos:]) {
 		tok := p.peek()
@@ -120,8 +257,7 @@ func (p *Parser) Parse() Stmt {
 		for p.peek().Type != lexer.TOK_ASSIGN {
 			pats = append(pats, p.parsePattern())
 		}
-		p.consume() // '='
-		exprBody := p.parseExpr()
+		exprBody := p.parseRHS()
 		return ScriptBindStmt{Binding: RawBinding{FName: tok.Str, Pats: pats, Body: exprBody}}
 	} else {
 		e := p.parseExpr()
@@ -178,70 +314,6 @@ func (p *Parser) parseExpr() ast.Node {
 		e = ast.IfNode{Cond: cond, Then: tBranch, Else: fBranch}
 	default:
 		e = p.parseOr()
-	}
-
-	if p.peek().Type == lexer.TOK_WHERE {
-		p.consume()
-		if p.peek().Type != lexer.TOK_LBRACE {
-			p.errorf("expected '{' after 'where'")
-		}
-		p.consume()
-
-		var parseBindings func() []RawBinding
-		parseBindings = func() []RawBinding {
-			if p.peek().Type == lexer.TOK_RBRACE {
-				p.consume()
-				return nil
-			}
-			if isAssignment(p.tokens[p.pos:]) {
-				nameTok := p.peek()
-				if nameTok.Type != lexer.TOK_VAR {
-					p.errorf("left hand side of local binding must start with an identifier")
-				}
-				p.consume()
-				var pats []ast.Pat
-				for p.peek().Type != lexer.TOK_ASSIGN {
-					pats = append(pats, p.parsePattern())
-				}
-				p.consume() // '='
-				exprBody := p.parseExpr()
-				b := RawBinding{FName: nameTok.Str, Pats: pats, Body: exprBody}
-
-				var rest []RawBinding
-				if p.peek().Type == lexer.TOK_SEMICOLON {
-					p.consume()
-					rest = parseBindings()
-				} else if p.peek().Type == lexer.TOK_RBRACE {
-					p.consume()
-				} else {
-					p.errorf("expected ';' or '}' in where bindings")
-				}
-				return append([]RawBinding{b}, rest...)
-			} else {
-				p.errorf("expected local binding in where clause")
-				return nil
-			}
-		}
-
-		bs := parseBindings()
-		grouped := make(map[string][]RawBinding)
-		var order []string
-		for _, b := range bs {
-			if _, ok := grouped[b.FName]; !ok {
-				order = append(order, b.FName)
-			}
-			grouped[b.FName] = append(grouped[b.FName], b)
-		}
-
-		var desugared []ast.Binding
-		for _, name := range order {
-			eqList := grouped[name]
-			desugared = append(desugared, ast.Binding{
-				Name: name,
-				Expr: DesugarEquations(eqList),
-			})
-		}
-		return ast.LetNode{Bindings: desugared, Body: e}
 	}
 	return e
 }
@@ -480,17 +552,14 @@ func (p *Parser) parseAtom() ast.Node {
 					},
 				}
 			} else {
-				p.consume()
-				p.consume()
+				p.consume() // '('
+				p.consume() // '-'
 				e := p.parseExpr()
 				if p.peek().Type != lexer.TOK_RPAREN {
 					p.errorf("expected ')'")
 				}
 				p.consume()
-				return ast.LamNode{
-					Var:  "x",
-					Body: ast.SubNode{Left: ast.VarNode{Name: "x"}, Right: e},
-				}
+				return ast.SubNode{Left: ast.IntNode{Val: 0}, Right: e}
 			}
 		} else {
 			p.consume() // '('
