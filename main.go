@@ -77,7 +77,7 @@ type DiffNode struct{ Left, Right Node }
 type RangeNode struct{ Start, End Node }
 
 type ZFNode struct {
-	Body Node
+	Body  Node
 	Quals []Qualifier
 }
 
@@ -198,6 +198,18 @@ func (e *Env) Lookup(x string) (Node, bool) {
 
 func (e *Env) Extend(x string, val Node) *Env {
 	return &Env{Parent: e, Name: x, Val: val}
+}
+
+func (e *Env) GetNames() []string {
+	var names []string
+	seen := make(map[string]bool)
+	for curr := e; curr != nil; curr = curr.Parent {
+		if curr.Name != "" && !seen[curr.Name] {
+			seen[curr.Name] = true
+			names = append(names, curr.Name)
+		}
+	}
+	return names
 }
 
 // ==========================================================================
@@ -2577,7 +2589,7 @@ func pendingBytes() int {
 	var limit int
 	_, _, err := syscall.Syscall(
 		syscall.SYS_IOCTL,
-		uintptr(0), // stdin fd
+		uintptr(0),      // stdin fd
 		uintptr(0x541b), // FIONREAD / TIOCINQ ioctl code on Linux
 		uintptr(unsafe.Pointer(&limit)),
 	)
@@ -2594,7 +2606,11 @@ func hasMore(r *bufio.Reader) bool {
 	return pendingBytes() > 0
 }
 
-func readLine(prompt string, history []string) (string, []string, bool) {
+func isWordChar(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+}
+
+func readLine(prompt string, history []string, env *Env) (string, []string, bool) {
 	cmd := exec.Command("stty", "raw", "-echo")
 	cmd.Stdin = os.Stdin
 	_ = cmd.Run()
@@ -2610,6 +2626,10 @@ func readLine(prompt string, history []string) (string, []string, bool) {
 	historyIdx := len(history)
 	var draft []rune
 
+	var lastTabCandidates []string
+	var lastTabIdx int
+	var lastTabStart int
+
 	fmt.Print(prompt)
 	reader := bufio.NewReader(os.Stdin)
 
@@ -2617,6 +2637,10 @@ func readLine(prompt string, history []string) (string, []string, bool) {
 		r, _, err := reader.ReadRune()
 		if err != nil {
 			return "", history, false
+		}
+
+		if r != 9 {
+			lastTabCandidates = nil
 		}
 
 		switch r {
@@ -2637,6 +2661,45 @@ func readLine(prompt string, history []string) (string, []string, bool) {
 			cursor = len(buf)
 		case 11: // Ctrl-K
 			buf = buf[:cursor]
+		case 9: // Tab Completion
+			if len(lastTabCandidates) > 0 {
+				lastTabIdx = (lastTabIdx + 1) % len(lastTabCandidates)
+				cand := lastTabCandidates[lastTabIdx]
+				buf = append(buf[:lastTabStart], append([]rune(cand), buf[cursor:]...)...)
+				cursor = lastTabStart + len(cand)
+			} else {
+				start := cursor
+				for start > 0 && isWordChar(buf[start-1]) {
+					start--
+				}
+				prefix := string(buf[start:cursor])
+				if len(prefix) > 0 {
+					var all []string
+					all = append(all, []string{"where", "if", "then", "else", "otherwise", "mod"}...)
+					all = append(all, []string{"hd", "tl", "show", "read", "lines", "numval", "length"}...)
+					if env != nil {
+						all = append(all, env.GetNames()...)
+					}
+
+					seen := make(map[string]bool)
+					var candidates []string
+					for _, item := range all {
+						if strings.HasPrefix(item, prefix) && !seen[item] {
+							seen[item] = true
+							candidates = append(candidates, item)
+						}
+					}
+
+					if len(candidates) > 0 {
+						lastTabCandidates = candidates
+						lastTabIdx = 0
+						lastTabStart = start
+						cand := candidates[0]
+						buf = append(buf[:start], append([]rune(cand), buf[cursor:]...)...)
+						cursor = start + len(cand)
+					}
+				}
+			}
 		case 13, 10: // Enter
 			fmt.Print("\r\n")
 			line := string(buf)
@@ -2729,7 +2792,7 @@ func runREPLDirect(env *Env, scriptFile string) {
 		var line string
 		if interactive {
 			var ok bool
-			line, history, ok = readLine("miranda> ", history)
+			line, history, ok = readLine("miranda> ", history, env)
 			if !ok {
 				fmt.Println("Goodbye.")
 				break

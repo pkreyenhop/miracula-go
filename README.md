@@ -15,6 +15,7 @@ Miracula is a lightweight interpreter and interactive REPL for a lazy functional
     - **Go to Start/End**: `Ctrl-A` (or `Home`) and `Ctrl-E` (or `End`).
     - **Delete/Kill**: `Ctrl-K` (kill to end of line), `Backspace` (delete backward), and `Delete` (delete under cursor).
     - **Interrupt/Exit**: `Ctrl-C` to cancel current entry, and `Ctrl-D` (on empty line) or `/q` to exit the REPL.
+    - **Autocomplete (Tab)**: Auto-completes keywords (`if`, `then`, `else`, `where`, `otherwise`, `mod`), built-in functions (`hd`, `tl`, `show`, `length`, etc.), and dynamically defined global variables/functions. Pressing `Tab` repeatedly cycles through matching candidates.
   - `/e` command: Open and edit the loaded script file in `vi`, reloading all definitions on exit.
   - `/q` command: Exit the REPL.
 
