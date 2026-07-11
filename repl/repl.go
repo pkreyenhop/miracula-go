@@ -114,7 +114,7 @@ func readLine(prompt string, history []string, env *ast.Env) (string, []string, 
 				if len(prefix) > 0 {
 					var all []string
 					all = append(all, []string{"where", "if", "then", "else", "otherwise", "mod"}...)
-					all = append(all, []string{"hd", "tl", "show", "read", "lines", "numval", "length"}...)
+					all = append(all, []string{"hd", "tl", "show", "read", "lines", "numval", "length", "reverse"}...)
 					if env != nil {
 						all = append(all, env.GetNames()...)
 					}
@@ -369,7 +369,7 @@ func RunREPLDirect(env *ast.Env, scriptFile string) {
 		}
 		if lineTrimmed == "/e" {
 			fmt.Printf("Opening vi %s ...\n", scriptFile)
-			cmd := exec.Command("vi", scriptFile)
+			cmd := exec.Command("./mica", scriptFile)
 			cmd.Stdin = os.Stdin
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr

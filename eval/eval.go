@@ -323,7 +323,7 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 		case ast.VarNode:
 			name := node.Name
 			switch name {
-			case "hd", "tl", "show", "read", "lines", "numval", "length":
+			case "hd", "tl", "show", "read", "lines", "numval", "length", "reverse":
 				return node
 			}
 			var val ast.Node
@@ -344,8 +344,13 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 				cell := th.Cell
 				switch cell.State {
 				case ast.Evaluated:
-					n = cell.Val
-					continue
+					switch cv := cell.Val.(type) {
+					case ast.IntNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
+						return cv
+					default:
+						n = cv
+						continue
+					}
 				case ast.Evaluating:
 					panic(ast.BlackholeError{Msg: "Infinite loop on identifier: " + name})
 				case ast.Unevaluated:
@@ -353,8 +358,13 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 					res := Whnf(cell.Env, cell.Expr)
 					cell.State = ast.Evaluated
 					cell.Val = res
-					n = res
-					continue
+					switch cv := res.(type) {
+					case ast.IntNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
+						return cv
+					default:
+						n = cv
+						continue
+					}
 				}
 			}
 			n = val
@@ -363,8 +373,13 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 			cell := node.Cell
 			switch cell.State {
 			case ast.Evaluated:
-				n = cell.Val
-				continue
+				switch cv := cell.Val.(type) {
+				case ast.IntNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
+					return cv
+				default:
+					n = cv
+					continue
+				}
 			case ast.Evaluating:
 				panic(ast.BlackholeError{Msg: "Infinite loop inside generic thunk node"})
 			case ast.Unevaluated:
@@ -372,8 +387,13 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 				res := Whnf(cell.Env, cell.Expr)
 				cell.State = ast.Evaluated
 				cell.Val = res
-				n = res
-				continue
+				switch cv := res.(type) {
+				case ast.IntNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
+					return cv
+				default:
+					n = cv
+					continue
+				}
 			}
 		case ast.IfNode:
 			condVal := Whnf(env, node.Cond)
@@ -680,6 +700,21 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 						}
 					}
 					return ast.IntNode{Val: length}
+				case "reverse":
+					var reversed ast.Node = ast.NilNode{}
+					curr := node.Right
+					for {
+						lVal := Whnf(env, curr)
+						if cons, ok := lVal.(ast.ConsNode); ok {
+							reversed = ast.ConsNode{Head: cons.Head, Tail: reversed}
+							curr = cons.Tail
+						} else if _, ok := lVal.(ast.NilNode); ok {
+							break
+						} else {
+							panic(ast.RuntimeError{Msg: "reverse expects a list"})
+						}
+					}
+					return reversed
 				default:
 					panic(ast.RuntimeError{Msg: "Unbound variable: " + f.Name})
 				}
