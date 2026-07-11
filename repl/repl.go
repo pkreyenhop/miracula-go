@@ -218,6 +218,42 @@ func readLine(prompt string, history []string, env *ast.Env) (string, []string, 
 	}
 }
 
+func FormatParseError(filename string, fileContent string, pe parser.ParseError) string {
+	lines := strings.Split(fileContent, "\n")
+	lineNum := pe.Tok.Line
+	colNum := pe.Tok.Col
+
+	if lineNum < 1 {
+		lineNum = 1
+	}
+	if lineNum > len(lines) {
+		lineNum = len(lines)
+	}
+
+	var lineStr string
+	if len(lines) > 0 && lineNum-1 < len(lines) {
+		lineStr = strings.TrimSuffix(lines[lineNum-1], "\r")
+	}
+
+	linePrefix := fmt.Sprintf("  %d | ", lineNum)
+	indentPrefix := strings.Repeat(" ", len(fmt.Sprintf("  %d ", lineNum))) + "| "
+
+	var caretSpace strings.Builder
+	runes := []rune(lineStr)
+	for i := 0; i < colNum-1 && i < len(runes); i++ {
+		if runes[i] == '\t' {
+			caretSpace.WriteString("\t")
+		} else {
+			caretSpace.WriteString(" ")
+		}
+	}
+
+	return fmt.Sprintf("%s:%d:%d: %s\n%s%s\n%s%s^",
+		filename, lineNum, colNum, pe.Error(),
+		linePrefix, lineStr,
+		indentPrefix, caretSpace.String())
+}
+
 func LoadScriptFile(filename string, env *ast.Env) (*ast.Env, error) {
 	bytes, err := os.ReadFile(filename)
 	if err != nil {
@@ -232,7 +268,7 @@ func LoadScriptFile(filename string, env *ast.Env) (*ast.Env, error) {
 	lines := strings.Split(string(bytes), "\n")
 	var layoutLines []lexer.LayoutLine
 
-	for _, line := range lines {
+	for lineIdx, line := range lines {
 		line = strings.TrimSuffix(line, "\r")
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "||") {
@@ -267,7 +303,7 @@ func LoadScriptFile(filename string, env *ast.Env) (*ast.Env, error) {
 		}
 		lineContent := string(runes[dropCount:])
 
-		lineToks := lexer.Tokenize(lineContent)
+		lineToks := lexer.TokenizeWithPos(lineContent, lineIdx+1)
 		var filtered []lexer.Token
 		for _, t := range lineToks {
 			if t.Type != lexer.TOK_EOF {
@@ -289,11 +325,15 @@ func LoadScriptFile(filename string, env *ast.Env) (*ast.Env, error) {
 		err := func() (err error) {
 			defer func() {
 				if r := recover(); r != nil {
-					var tokStrs []string
-					for _, t := range seg {
-						tokStrs = append(tokStrs, lexer.TokenToString(t))
+					if pe, ok := r.(parser.ParseError); ok {
+						err = fmt.Errorf("%s", FormatParseError(filename, string(bytes), pe))
+					} else {
+						var tokStrs []string
+						for _, t := range seg {
+							tokStrs = append(tokStrs, lexer.TokenToString(t))
+						}
+						err = fmt.Errorf("parse error in segment:\n%s\nDetails: %v", strings.Join(tokStrs, " "), r)
 					}
-					err = fmt.Errorf("parse error in segment:\n%s\nDetails: %v", strings.Join(tokStrs, " "), r)
 				}
 			}()
 			p := parser.NewParser(seg)
@@ -393,6 +433,8 @@ func RunREPLDirect(env *ast.Env, scriptFile string) {
 						fmt.Printf("Runtime Error: %s\n", rtErr.Msg)
 					} else if bhErr, ok := r.(ast.BlackholeError); ok {
 						fmt.Printf("Runtime Error: %s\n", bhErr.Msg)
+					} else if pe, ok := r.(parser.ParseError); ok {
+						fmt.Println(FormatParseError("<stdin>", lineTrimmed, pe))
 					} else {
 						fmt.Printf("Error: %v\n", r)
 					}

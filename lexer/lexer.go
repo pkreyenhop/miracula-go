@@ -58,9 +58,19 @@ type Token struct {
 	Int  int
 	Str  string
 	Char rune
+	Line int
+	Col  int
+}
+
+func (t Token) String() string {
+	return TokenToString(t)
 }
 
 func Tokenize(str string) []Token {
+	return TokenizeWithPos(str, 1)
+}
+
+func TokenizeWithPos(str string, line int) []Token {
 	runes := []rune(str)
 	size := len(runes)
 	var acc []Token
@@ -71,53 +81,59 @@ func Tokenize(str string) []Token {
 			i++
 			continue
 		}
+		startCol := i + 1
+		addTok := func(t Token) {
+			t.Line = line
+			t.Col = startCol
+			acc = append(acc, t)
+		}
 		if c == '\\' {
 			if i+1 < size && runes[i+1] == '/' {
-				acc = append(acc, Token{Type: TOK_OR})
+				addTok(Token{Type: TOK_OR})
 				i += 2
 			} else {
-				acc = append(acc, Token{Type: TOK_LAMBDA})
+				addTok(Token{Type: TOK_LAMBDA})
 				i++
 			}
 			continue
 		}
 		if c == '.' {
 			if i+1 < size && runes[i+1] == '.' {
-				acc = append(acc, Token{Type: TOK_DOTDOT})
+				addTok(Token{Type: TOK_DOTDOT})
 				i += 2
 			} else {
-				acc = append(acc, Token{Type: TOK_DOT})
+				addTok(Token{Type: TOK_DOT})
 				i++
 			}
 			continue
 		}
 		if c == '(' {
-			acc = append(acc, Token{Type: TOK_LPAREN})
+			addTok(Token{Type: TOK_LPAREN})
 			i++
 			continue
 		}
 		if c == ')' {
-			acc = append(acc, Token{Type: TOK_RPAREN})
+			addTok(Token{Type: TOK_RPAREN})
 			i++
 			continue
 		}
 		if c == '[' {
-			acc = append(acc, Token{Type: TOK_LBRACK})
+			addTok(Token{Type: TOK_LBRACK})
 			i++
 			continue
 		}
 		if c == ']' {
-			acc = append(acc, Token{Type: TOK_RBRACK})
+			addTok(Token{Type: TOK_RBRACK})
 			i++
 			continue
 		}
 		if c == ',' {
-			acc = append(acc, Token{Type: TOK_COMMA})
+			addTok(Token{Type: TOK_COMMA})
 			i++
 			continue
 		}
 		if c == ';' {
-			acc = append(acc, Token{Type: TOK_SEMICOLON})
+			addTok(Token{Type: TOK_SEMICOLON})
 			i++
 			continue
 		}
@@ -126,47 +142,47 @@ func Tokenize(str string) []Token {
 				// Comment! Ignore the rest of the line
 				break
 			} else {
-				acc = append(acc, Token{Type: TOK_PIPE})
+				addTok(Token{Type: TOK_PIPE})
 				i++
 			}
 			continue
 		}
 		if c == '<' {
 			if i+1 < size && runes[i+1] == '-' {
-				acc = append(acc, Token{Type: TOK_LARROW})
+				addTok(Token{Type: TOK_LARROW})
 				i += 2
 			} else if i+1 < size && runes[i+1] == '=' {
-				acc = append(acc, Token{Type: TOK_LE})
+				addTok(Token{Type: TOK_LE})
 				i += 2
 			} else {
-				acc = append(acc, Token{Type: TOK_LT})
+				addTok(Token{Type: TOK_LT})
 				i++
 			}
 			continue
 		}
 		if c == '>' {
 			if i+1 < size && runes[i+1] == '=' {
-				acc = append(acc, Token{Type: TOK_GE})
+				addTok(Token{Type: TOK_GE})
 				i += 2
 			} else {
-				acc = append(acc, Token{Type: TOK_GT})
+				addTok(Token{Type: TOK_GT})
 				i++
 			}
 			continue
 		}
 		if c == '=' {
 			if i+1 < size && runes[i+1] == '=' {
-				acc = append(acc, Token{Type: TOK_EQ})
+				addTok(Token{Type: TOK_EQ})
 				i += 2
 			} else {
-				acc = append(acc, Token{Type: TOK_ASSIGN})
+				addTok(Token{Type: TOK_ASSIGN})
 				i++
 			}
 			continue
 		}
 		if c == '!' {
 			if i+1 < size && runes[i+1] == '=' {
-				acc = append(acc, Token{Type: TOK_NE})
+				addTok(Token{Type: TOK_NE})
 				i += 2
 			} else {
 				i++
@@ -175,7 +191,7 @@ func Tokenize(str string) []Token {
 		}
 		if c == '~' {
 			if i+1 < size && runes[i+1] == '=' {
-				acc = append(acc, Token{Type: TOK_NE})
+				addTok(Token{Type: TOK_NE})
 				i += 2
 			} else {
 				i++
@@ -183,56 +199,56 @@ func Tokenize(str string) []Token {
 			continue
 		}
 		if c == '/' {
-			acc = append(acc, Token{Type: TOK_DIV})
+			addTok(Token{Type: TOK_DIV})
 			i++
 			continue
 		}
 		if c == '&' {
-			acc = append(acc, Token{Type: TOK_AND})
+			addTok(Token{Type: TOK_AND})
 			i++
 			continue
 		}
 		if c == '*' {
-			acc = append(acc, Token{Type: TOK_MUL})
+			addTok(Token{Type: TOK_MUL})
 			i++
 			continue
 		}
 		if c == ':' {
-			acc = append(acc, Token{Type: TOK_COLON})
+			addTok(Token{Type: TOK_COLON})
 			i++
 			continue
 		}
 		if c == '#' {
-			acc = append(acc, Token{Type: TOK_HASH})
+			addTok(Token{Type: TOK_HASH})
 			i++
 			continue
 		}
 		if c == '+' {
 			if i+1 < size && runes[i+1] == '+' {
-				acc = append(acc, Token{Type: TOK_PP})
+				addTok(Token{Type: TOK_PP})
 				i += 2
 			} else {
-				acc = append(acc, Token{Type: TOK_ADD})
+				addTok(Token{Type: TOK_ADD})
 				i++
 			}
 			continue
 		}
 		if c == '-' {
 			if i+1 < size && runes[i+1] == '>' {
-				acc = append(acc, Token{Type: TOK_ARROW})
+				addTok(Token{Type: TOK_ARROW})
 				i += 2
 			} else if i+1 < size && runes[i+1] == '-' {
-				acc = append(acc, Token{Type: TOK_DIFF})
+				addTok(Token{Type: TOK_DIFF})
 				i += 2
 			} else {
-				acc = append(acc, Token{Type: TOK_SUB})
+				addTok(Token{Type: TOK_SUB})
 				i++
 			}
 			continue
 		}
 		if c == '\'' {
 			if i+2 < size && runes[i+1] != '\\' && runes[i+2] == '\'' {
-				acc = append(acc, Token{Type: TOK_CHAR, Char: runes[i+1]})
+				addTok(Token{Type: TOK_CHAR, Char: runes[i+1]})
 				i += 3
 			} else if i+3 < size && runes[i+1] == '\\' && runes[i+3] == '\'' {
 				esc := runes[i+2]
@@ -249,7 +265,7 @@ func Tokenize(str string) []Token {
 				default:
 					ch = esc
 				}
-				acc = append(acc, Token{Type: TOK_CHAR, Char: ch})
+				addTok(Token{Type: TOK_CHAR, Char: ch})
 				i += 4
 			} else {
 				i++
@@ -286,7 +302,7 @@ func Tokenize(str string) []Token {
 					j++
 				}
 			}
-			acc = append(acc, Token{Type: TOK_STRING, Str: sb.String()})
+			addTok(Token{Type: TOK_STRING, Str: sb.String()})
 			i = j
 			continue
 		}
@@ -296,7 +312,7 @@ func Tokenize(str string) []Token {
 				j++
 			}
 			val, _ := strconv.Atoi(string(runes[i:j]))
-			acc = append(acc, Token{Type: TOK_INT, Int: val})
+			addTok(Token{Type: TOK_INT, Int: val})
 			i = j
 			continue
 		}
@@ -323,13 +339,15 @@ func Tokenize(str string) []Token {
 			default:
 				tokType = TOK_VAR
 			}
-			acc = append(acc, Token{Type: tokType, Str: s})
+			addTok(Token{Type: tokType, Str: s})
 			i = j
 			continue
 		}
 		i++
 	}
-	acc = append(acc, Token{Type: TOK_EOF})
+	// For EOF, we can use the last column index
+	startCol := i + 1
+	acc = append(acc, Token{Type: TOK_EOF, Line: line, Col: startCol})
 	return acc
 }
 
@@ -339,9 +357,11 @@ func WrapWhereOnLine(toks []Token) []Token {
 		if toks[i].Type == TOK_WHERE {
 			res = append(res, toks[i])
 			if i+1 < len(toks) {
-				res = append(res, Token{Type: TOK_LBRACE})
+				lbrace := Token{Type: TOK_LBRACE, Line: toks[i].Line, Col: toks[i].Col}
+				rbrace := Token{Type: TOK_RBRACE, Line: toks[i].Line, Col: toks[i].Col}
+				res = append(res, lbrace)
 				res = append(res, WrapWhereOnLine(toks[i+1:])...)
-				res = append(res, Token{Type: TOK_RBRACE})
+				res = append(res, rbrace)
 				break
 			}
 		} else {
@@ -388,12 +408,20 @@ func ApplyLayout(lines []LayoutLine) []Token {
 		indent := line.Indent
 		lineToks := line.Toks
 
+		var firstLineTok Token
+		if len(lineToks) > 0 {
+			firstLineTok = lineToks[0]
+		} else {
+			firstLineTok = Token{Line: 1, Col: 1}
+		}
+
 		justPushed := false
 		if expectLayout && depth == 0 {
 			parentLayout := stack[len(stack)-1]
 			if indent > parentLayout {
 				stack = append(stack, indent)
-				acc = append(acc, Token{Type: TOK_LBRACE})
+				lbrace := Token{Type: TOK_LBRACE, Line: firstLineTok.Line, Col: firstLineTok.Col}
+				acc = append(acc, lbrace)
 				expectLayout = false
 				justPushed = true
 			} else {
@@ -404,13 +432,20 @@ func ApplyLayout(lines []LayoutLine) []Token {
 		if depth == 0 {
 			for len(stack) > 1 && indent < stack[len(stack)-1] {
 				stack = stack[:len(stack)-1]
-				acc = append(acc, Token{Type: TOK_RBRACE})
+				var rbrace Token
+				if len(acc) > 0 {
+					rbrace = Token{Type: TOK_RBRACE, Line: acc[len(acc)-1].Line, Col: acc[len(acc)-1].Col}
+				} else {
+					rbrace = Token{Type: TOK_RBRACE, Line: firstLineTok.Line, Col: firstLineTok.Col}
+				}
+				acc = append(acc, rbrace)
 			}
 		}
 
 		currentLayout := stack[len(stack)-1]
 		if depth == 0 && indent == currentLayout && len(acc) > 0 && !justPushed {
-			acc = append(acc, Token{Type: TOK_SEMICOLON})
+			semicolon := Token{Type: TOK_SEMICOLON, Line: acc[len(acc)-1].Line, Col: acc[len(acc)-1].Col}
+			acc = append(acc, semicolon)
 		}
 
 		if depth == 0 {
@@ -429,9 +464,21 @@ func ApplyLayout(lines []LayoutLine) []Token {
 
 	for len(stack) > 1 {
 		stack = stack[:len(stack)-1]
-		acc = append(acc, Token{Type: TOK_RBRACE})
+		var rbrace Token
+		if len(acc) > 0 {
+			rbrace = Token{Type: TOK_RBRACE, Line: acc[len(acc)-1].Line, Col: acc[len(acc)-1].Col}
+		} else {
+			rbrace = Token{Type: TOK_RBRACE, Line: 1, Col: 1}
+		}
+		acc = append(acc, rbrace)
 	}
-	acc = append(acc, Token{Type: TOK_EOF})
+	var eof Token
+	if len(acc) > 0 {
+		eof = Token{Type: TOK_EOF, Line: acc[len(acc)-1].Line, Col: acc[len(acc)-1].Col}
+	} else {
+		eof = Token{Type: TOK_EOF, Line: 1, Col: 1}
+	}
+	acc = append(acc, eof)
 	return acc
 }
 
@@ -454,7 +501,14 @@ func SplitTokens(tokens []Token) [][]Token {
 
 		if t.Type == TOK_SEMICOLON && depth == 0 {
 			segment := append([]Token(nil), current...)
-			segment = append(segment, Token{Type: TOK_EOF})
+			var eof Token
+			if len(current) > 0 {
+				last := current[len(current)-1]
+				eof = Token{Type: TOK_EOF, Line: last.Line, Col: last.Col}
+			} else {
+				eof = Token{Type: TOK_EOF, Line: 1, Col: 1}
+			}
+			segment = append(segment, eof)
 			segments = append(segments, segment)
 			current = nil
 		} else {
@@ -465,7 +519,9 @@ func SplitTokens(tokens []Token) [][]Token {
 
 	if len(current) > 0 {
 		segment := append([]Token(nil), current...)
-		segment = append(segment, Token{Type: TOK_EOF})
+		last := current[len(current)-1]
+		eof := Token{Type: TOK_EOF, Line: last.Line, Col: last.Col}
+		segment = append(segment, eof)
 		segments = append(segments, segment)
 	}
 	return segments

@@ -35,9 +35,25 @@ type REPLEvalStmt struct {
 func (ScriptBindStmt) isStmt() {}
 func (REPLEvalStmt) isStmt()   {}
 
+type ParseError struct {
+	Msg string
+	Tok lexer.Token
+}
+
+func (e ParseError) Error() string {
+	return e.Msg
+}
+
 type Parser struct {
 	tokens []lexer.Token
 	pos    int
+}
+
+func (p *Parser) errorf(format string, args ...interface{}) {
+	panic(ParseError{
+		Msg: fmt.Sprintf(format, args...),
+		Tok: p.peek(),
+	})
 }
 
 func NewParser(tokens []lexer.Token) *Parser {
@@ -97,7 +113,7 @@ func (p *Parser) Parse() Stmt {
 	if isAssignment(p.tokens[p.pos:]) {
 		tok := p.peek()
 		if tok.Type != lexer.TOK_VAR {
-			panic(fmt.Errorf("left hand side of binding must start with an identifier"))
+			p.errorf("left hand side of binding must start with an identifier")
 		}
 		p.consume()
 		var pats []ast.Pat
@@ -110,7 +126,7 @@ func (p *Parser) Parse() Stmt {
 	} else {
 		e := p.parseExpr()
 		if p.peek().Type != lexer.TOK_EOF {
-			panic(fmt.Errorf("trailing tokens left unparsed: %v", p.peek()))
+			p.errorf("trailing tokens left unparsed: %s", p.peek().String())
 		}
 		return REPLEvalStmt{Expr: e}
 	}
@@ -124,11 +140,11 @@ func (p *Parser) parseExpr() ast.Node {
 		p.consume()
 		v := p.peek()
 		if v.Type != lexer.TOK_VAR {
-			panic(fmt.Errorf("expected variable after lambda '\\'"))
+			p.errorf("expected variable after lambda '\\'")
 		}
 		p.consume()
 		if p.peek().Type != lexer.TOK_DOT {
-			panic(fmt.Errorf("expected '.' after lambda variable"))
+			p.errorf("expected '.' after lambda variable")
 		}
 		p.consume()
 		e = ast.LamNode{Var: v.Str, Body: p.parseExpr()}
@@ -136,12 +152,12 @@ func (p *Parser) parseExpr() ast.Node {
 		p.consume()
 		cond := p.parseExpr()
 		if p.peek().Type != lexer.TOK_THEN {
-			panic(fmt.Errorf("expected 'then'"))
+			p.errorf("expected 'then'")
 		}
 		p.consume()
 		tBranch := p.parseExpr()
 		if p.peek().Type != lexer.TOK_ELSE {
-			panic(fmt.Errorf("expected 'else'"))
+			p.errorf("expected 'else'")
 		}
 		p.consume()
 		fBranch := p.parseExpr()
@@ -150,12 +166,12 @@ func (p *Parser) parseExpr() ast.Node {
 		p.consume()
 		cond := p.parseExpr()
 		if p.peek().Type != lexer.TOK_THEN {
-			panic(fmt.Errorf("expected 'then'"))
+			p.errorf("expected 'then'")
 		}
 		p.consume()
 		tBranch := p.parseExpr()
 		if p.peek().Type != lexer.TOK_ELSE {
-			panic(fmt.Errorf("expected 'else'"))
+			p.errorf("expected 'else'")
 		}
 		p.consume()
 		fBranch := p.parseExpr()
@@ -167,7 +183,7 @@ func (p *Parser) parseExpr() ast.Node {
 	if p.peek().Type == lexer.TOK_WHERE {
 		p.consume()
 		if p.peek().Type != lexer.TOK_LBRACE {
-			panic(fmt.Errorf("expected '{' after 'where'"))
+			p.errorf("expected '{' after 'where'")
 		}
 		p.consume()
 
@@ -180,7 +196,7 @@ func (p *Parser) parseExpr() ast.Node {
 			if isAssignment(p.tokens[p.pos:]) {
 				nameTok := p.peek()
 				if nameTok.Type != lexer.TOK_VAR {
-					panic(fmt.Errorf("left hand side of local binding must start with an identifier"))
+					p.errorf("left hand side of local binding must start with an identifier")
 				}
 				p.consume()
 				var pats []ast.Pat
@@ -198,11 +214,12 @@ func (p *Parser) parseExpr() ast.Node {
 				} else if p.peek().Type == lexer.TOK_RBRACE {
 					p.consume()
 				} else {
-					panic(fmt.Errorf("expected ';' or '}' in where bindings"))
+					p.errorf("expected ';' or '}' in where bindings")
 				}
 				return append([]RawBinding{b}, rest...)
 			} else {
-				panic(fmt.Errorf("expected local binding in where clause"))
+				p.errorf("expected local binding in where clause")
+				return nil
 			}
 		}
 
@@ -417,7 +434,7 @@ func (p *Parser) parseAtom() ast.Node {
 				p.consume() // ':'
 				e := p.parseExpr()
 				if p.peek().Type != lexer.TOK_RPAREN {
-					panic(fmt.Errorf("expected ')'"))
+					p.errorf("expected ')'")
 				}
 				p.consume()
 				return ast.LamNode{
@@ -442,7 +459,7 @@ func (p *Parser) parseAtom() ast.Node {
 				p.consume()
 				e := p.parseExpr()
 				if p.peek().Type != lexer.TOK_RPAREN {
-					panic(fmt.Errorf("expected ')'"))
+					p.errorf("expected ')'")
 				}
 				p.consume()
 				return ast.LamNode{
@@ -467,7 +484,7 @@ func (p *Parser) parseAtom() ast.Node {
 				p.consume()
 				e := p.parseExpr()
 				if p.peek().Type != lexer.TOK_RPAREN {
-					panic(fmt.Errorf("expected ')'"))
+					p.errorf("expected ')'")
 				}
 				p.consume()
 				return ast.LamNode{
@@ -490,20 +507,21 @@ func (p *Parser) parseAtom() ast.Node {
 						p.consume()
 						break
 					} else {
-						panic(fmt.Errorf("expected ',' or ')' inside tuple"))
+						p.errorf("expected ',' or ')' inside tuple")
 					}
 				}
 				return ast.TupleNode{Elems: elms}
 			} else {
 				if p.peek().Type != lexer.TOK_RPAREN {
-					panic(fmt.Errorf("expected ')'"))
+					p.errorf("expected ')'")
 				}
 				p.consume()
 				return first
 			}
 		}
 	default:
-		panic(fmt.Errorf("unexpected token %v inside atom expression", tok))
+		p.errorf("unexpected token %s inside atom expression", tok.String())
+		return nil
 	}
 }
 
@@ -546,7 +564,7 @@ func (p *Parser) parseListElements() ast.Node {
 			if hasLArrow() {
 				pat := p.parsePattern()
 				if p.peek().Type != lexer.TOK_LARROW {
-					panic(fmt.Errorf("expected '<-'"))
+					p.errorf("expected '<-'")
 				}
 				p.consume()
 				src := p.parseExpr()
@@ -563,7 +581,8 @@ func (p *Parser) parseListElements() ast.Node {
 				p.consume()
 				return []ast.Qualifier{q}
 			} else {
-				panic(fmt.Errorf("expected ';' or ']' in qualifiers"))
+				p.errorf("expected ';' or ']' in qualifiers")
+				return nil
 			}
 		}
 
@@ -573,7 +592,7 @@ func (p *Parser) parseListElements() ast.Node {
 		p.consume()
 		tailExpr := p.parseExpr()
 		if p.peek().Type != lexer.TOK_RBRACK {
-			panic(fmt.Errorf("expected ']' after range expression"))
+			p.errorf("expected ']' after range expression")
 		}
 		p.consume()
 		return ast.RangeNode{Start: head, End: tailExpr}
@@ -584,7 +603,8 @@ func (p *Parser) parseListElements() ast.Node {
 		p.consume()
 		return ast.ConsNode{Head: head, Tail: ast.NilNode{}}
 	} else {
-		panic(fmt.Errorf("expected '|', '..', ',', or ']' in list expression"))
+		p.errorf("expected '|', '..', ',', or ']' in list expression")
+		return nil
 	}
 }
 
@@ -606,7 +626,7 @@ func (p *Parser) parsePattern() ast.Pat {
 			p.consume()
 			return ast.PatNil{}
 		}
-		panic(fmt.Errorf("only empty list pattern '[]' is supported directly"))
+		p.errorf("only empty list pattern '[]' is supported directly")
 	case lexer.TOK_LPAREN:
 		p.consume()
 		var parseTuplePats func([]ast.Pat) []ast.Pat
@@ -620,7 +640,8 @@ func (p *Parser) parsePattern() ast.Pat {
 				p.consume()
 				return append(acc, pCons)
 			} else {
-				panic(fmt.Errorf("expected ',' or ')' inside tuple pattern"))
+				p.errorf("expected ',' or ')' inside tuple pattern")
+				return nil
 			}
 		}
 		first := p.parsePatternCons()
@@ -629,14 +650,16 @@ func (p *Parser) parsePattern() ast.Pat {
 			return ast.PatTuple{Elems: parseTuplePats([]ast.Pat{first})}
 		} else {
 			if p.peek().Type != lexer.TOK_RPAREN {
-				panic(fmt.Errorf("expected ')' in pattern"))
+				p.errorf("expected ')' in pattern")
 			}
 			p.consume()
 			return first
 		}
 	default:
-		panic(fmt.Errorf("malformed pattern in equation left hand side: %v", tok))
+		p.errorf("malformed pattern in equation left hand side: %s", tok.String())
+		return nil
 	}
+	return nil
 }
 
 func (p *Parser) parsePatternCons() ast.Pat {
