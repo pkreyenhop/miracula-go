@@ -14,6 +14,7 @@ import (
 	"pkreyenhop.com/miracula-go/lexer"
 	"pkreyenhop.com/miracula-go/parser"
 	"pkreyenhop.com/miracula-go/eval"
+	"pkreyenhop.com/miracula-go/typecheck"
 )
 
 func IsTTY() bool {
@@ -273,15 +274,15 @@ func FormatParseError(filename string, fileContent string, pe parser.ParseError)
 		indentPrefix, caretSpace.String())
 }
 
-func LoadScriptFile(filename string, env *ast.Env) (*ast.Env, error) {
+func LoadScriptFile(filename string, env *ast.Env, typeEnv *typecheck.TypeEnv) (*ast.Env, *typecheck.TypeEnv, error) {
 	bytes, err := os.ReadFile(filename)
 	if err != nil {
 		if filename == "stdenv.m" {
 			fmt.Println("Standard environment file 'stdenv.m' not found. Skipping.")
-			return env, nil
+			return env, typeEnv, nil
 		}
 		fmt.Printf("Script file '%s' not found. Starting with empty space.\n", filename)
-		return env, nil
+		return env, typeEnv, nil
 	}
 
 	lines := strings.Split(string(bytes), "\n")
@@ -365,7 +366,7 @@ func LoadScriptFile(filename string, env *ast.Env) (*ast.Env, error) {
 			return nil
 		}()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -379,16 +380,36 @@ func LoadScriptFile(filename string, env *ast.Env) (*ast.Env, error) {
 	}
 
 	accEnv := env
+	accTypeEnv := typeEnv
+	tc := typecheck.NewTypeChecker()
+	sCurr := typecheck.Substitution(nil)
+
 	for _, name := range order {
 		eqList := grouped[name]
 		desugaredLambda := parser.DesugarEquations(eqList)
+
+		selfTy := tc.Fresh()
+		tcEnv := accTypeEnv.Extend(name, typecheck.Scheme{Vars: nil, Ty: selfTy})
+		tB, sNext, err := tc.Infer(tcEnv, desugaredLambda, sCurr)
+		if err != nil {
+			return nil, nil, fmt.Errorf("Type Error in '%s': %w", name, err)
+		}
+		sNext2, err := sNext.Unify(selfTy, tB)
+		if err != nil {
+			return nil, nil, fmt.Errorf("Type Error in '%s': %w", name, err)
+		}
+		sCurr = sNext2
+
+		finalTy := sCurr.Apply(selfTy)
+		scheme := typecheck.Generalize(sCurr.ApplyEnv(accTypeEnv), finalTy)
+		accTypeEnv = accTypeEnv.Extend(name, scheme)
 		accEnv = accEnv.Extend(name, desugaredLambda)
 	}
 
-	return accEnv, nil
+	return accEnv, accTypeEnv, nil
 }
 
-func RunREPLDirect(env *ast.Env, scriptFile string) {
+func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) {
 	interactive := IsTTY()
 	var history []string
 	var scanner *bufio.Scanner
@@ -438,12 +459,13 @@ func RunREPLDirect(env *ast.Env, scriptFile string) {
 			cmd.Stderr = os.Stderr
 			_ = cmd.Run()
 			fmt.Printf("Reloading environment profiles from %s...\n", scriptFile)
-			envWithStd, _ := LoadScriptFile("stdenv.m", ast.NewEnv())
-			reloadedEnv, err := LoadScriptFile(scriptFile, envWithStd)
+			envWithStd, typeEnvWithStd, _ := LoadScriptFile("stdenv.m", ast.NewEnv(), typecheck.DefaultTypeEnv())
+			reloadedEnv, reloadedTypeEnv, err := LoadScriptFile(scriptFile, envWithStd, typeEnvWithStd)
 			if err != nil {
 				fmt.Printf("Error reloading: %v\n", err)
 			} else {
 				env = reloadedEnv
+				typeEnv = reloadedTypeEnv
 			}
 			continue
 		}
@@ -518,7 +540,11 @@ func RunREPLDirect(env *ast.Env, scriptFile string) {
 			defer func() {
 				if r := recover(); r != nil {
 					if rtErr, ok := r.(ast.RuntimeError); ok {
-						fmt.Printf("Runtime Error: %s\n", rtErr.Msg)
+						if strings.HasPrefix(rtErr.Msg, "Type Error:") {
+							fmt.Println(rtErr.Msg)
+						} else {
+							fmt.Printf("Runtime Error: %s\n", rtErr.Msg)
+						}
 					} else if bhErr, ok := r.(ast.BlackholeError); ok {
 						fmt.Printf("Runtime Error: %s\n", bhErr.Msg)
 					} else if pe, ok := r.(parser.ParseError); ok {
@@ -563,15 +589,45 @@ func RunREPLDirect(env *ast.Env, scriptFile string) {
 					grouped[b.FName] = append(grouped[b.FName], b)
 				}
 
+				tc := typecheck.NewTypeChecker()
+				sCurr := typecheck.Substitution(nil)
+				accTypeEnv := typeEnv
 				accEnv := env
+
 				for _, name := range order {
 					eqList := grouped[name]
 					finalLambda := parser.DesugarEquations(eqList)
+
+					selfTy := tc.Fresh()
+					tcEnv := accTypeEnv.Extend(name, typecheck.Scheme{Vars: nil, Ty: selfTy})
+					tB, sNext, err := tc.Infer(tcEnv, finalLambda, sCurr)
+					if err != nil {
+						panic(ast.RuntimeError{Msg: fmt.Sprintf("Type Error: %s", err)})
+					}
+					sNext2, err := sNext.Unify(selfTy, tB)
+					if err != nil {
+						panic(ast.RuntimeError{Msg: fmt.Sprintf("Type Error: %s", err)})
+					}
+					sCurr = sNext2
+
+					finalTy := sCurr.Apply(selfTy)
+					scheme := typecheck.Generalize(sCurr.ApplyEnv(accTypeEnv), finalTy)
+					accTypeEnv = accTypeEnv.Extend(name, scheme)
 					accEnv = accEnv.Extend(name, finalLambda)
+				}
+
+				for _, name := range order {
 					fmt.Printf("Defined variable: %s\n", name)
 				}
 				env = accEnv
+				typeEnv = accTypeEnv
 			} else {
+				tc := typecheck.NewTypeChecker()
+				_, _, err := tc.Infer(typeEnv, evalStmt.Expr, nil)
+				if err != nil {
+					panic(ast.RuntimeError{Msg: fmt.Sprintf("Type Error: %s", err)})
+				}
+
 				startTime := time.Now()
 				result := eval.Whnf(env, evalStmt.Expr)
 				duration := time.Since(startTime).Milliseconds()

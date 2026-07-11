@@ -8,6 +8,7 @@ import (
 
 	"pkreyenhop.com/miracula-go/ast"
 	"pkreyenhop.com/miracula-go/eval"
+	"pkreyenhop.com/miracula-go/typecheck"
 )
 
 func TestPerformanceFib29(t *testing.T) {
@@ -30,16 +31,17 @@ fib n = fib (n-1) + fib (n-2)
 
 	// 2. Load the script file into the environment
 	env := ast.NewEnv()
+	typeEnv := typecheck.DefaultTypeEnv()
 	// Load standard environment if it exists in the parent directory
 	stdenvPath := filepath.Join("..", "stdenv.m")
 	if _, statErr := os.Stat(stdenvPath); statErr == nil {
-		env, err = LoadScriptFile(stdenvPath, env)
+		env, typeEnv, err = LoadScriptFile(stdenvPath, env, typeEnv)
 		if err != nil {
 			t.Fatalf("Failed to load stdenv.m: %v", err)
 		}
 	}
 
-	env, err = LoadScriptFile(scriptPath, env)
+	env, typeEnv, err = LoadScriptFile(scriptPath, env, typeEnv)
 	if err != nil {
 		t.Fatalf("Failed to load fib.m: %v", err)
 	}
@@ -98,14 +100,15 @@ fib n = fib (n-1) + fib (n-2)
 	}
 
 	env := ast.NewEnv()
+	typeEnv := typecheck.DefaultTypeEnv()
 	if _, statErr := os.Stat(stdenvPath); statErr == nil {
-		env, err = LoadScriptFile(stdenvPath, env)
+		env, typeEnv, err = LoadScriptFile(stdenvPath, env, typeEnv)
 		if err != nil {
 			b.Fatalf("Failed to load stdenv.m: %v", err)
 		}
 	}
 
-	env, err = LoadScriptFile(scriptPath, env)
+	env, typeEnv, err = LoadScriptFile(scriptPath, env, typeEnv)
 	if err != nil {
 		b.Fatalf("Failed to load fib.m: %v", err)
 	}

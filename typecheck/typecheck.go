@@ -1,0 +1,822 @@
+package typecheck
+
+import (
+	"fmt"
+	"strings"
+	"pkreyenhop.com/miracula-go/ast"
+)
+
+type Type interface {
+	String() string
+}
+
+type PrimType int
+const (
+	TInt PrimType = iota
+	TBool
+	TChar
+)
+
+func (t PrimType) String() string {
+	switch t {
+	case TInt:
+		return "Int"
+	case TBool:
+		return "Bool"
+	case TChar:
+		return "Char"
+	}
+	return "Unknown"
+}
+
+type VarType struct {
+	Id int
+}
+
+func (t VarType) String() string {
+	if t.Id < 26 {
+		return string(rune('a' + t.Id))
+	}
+	return fmt.Sprintf("a%d", t.Id)
+}
+
+type FunType struct {
+	From Type
+	To   Type
+}
+
+func (t FunType) String() string {
+	var fromStr string
+	if _, ok := t.From.(FunType); ok {
+		fromStr = "(" + t.From.String() + ")"
+	} else {
+		fromStr = t.From.String()
+	}
+	return fromStr + " -> " + t.To.String()
+}
+
+type ListType struct {
+	Elem Type
+}
+
+func (t ListType) String() string {
+	return "[" + t.Elem.String() + "]"
+}
+
+type TupleType struct {
+	Elems []Type
+}
+
+func (t TupleType) String() string {
+	var strs []string
+	for _, e := range t.Elems {
+		strs = append(strs, e.String())
+	}
+	return "(" + strings.Join(strs, ", ") + ")"
+}
+
+type Scheme struct {
+	Vars []int
+	Ty   Type
+}
+
+func (s Scheme) String() string {
+	if len(s.Vars) == 0 {
+		return s.Ty.String()
+	}
+	var vars []string
+	for _, v := range s.Vars {
+		vars = append(vars, VarType{Id: v}.String())
+	}
+	return "forall " + strings.Join(vars, " ") + ". " + s.Ty.String()
+}
+
+type TypeEnv struct {
+	Parent *TypeEnv
+	Map    map[string]Scheme
+}
+
+func NewTypeEnv(parent *TypeEnv) *TypeEnv {
+	return &TypeEnv{
+		Parent: parent,
+		Map:    make(map[string]Scheme),
+	}
+}
+
+func (env *TypeEnv) Lookup(x string) (Scheme, bool) {
+	for curr := env; curr != nil; curr = curr.Parent {
+		if s, ok := curr.Map[x]; ok {
+			return s, true
+		}
+	}
+	return Scheme{}, false
+}
+
+func (env *TypeEnv) Extend(x string, s Scheme) *TypeEnv {
+	next := NewTypeEnv(env.Parent)
+	for k, v := range env.Map {
+		next.Map[k] = v
+	}
+	next.Map[x] = s
+	return next
+}
+
+type Substitution map[int]Type
+
+func (sub Substitution) Apply(t Type) Type {
+	switch ty := t.(type) {
+	case PrimType:
+		return ty
+	case VarType:
+		if replacement, ok := sub[ty.Id]; ok {
+			return sub.Apply(replacement)
+		}
+		return ty
+	case FunType:
+		return FunType{
+			From: sub.Apply(ty.From),
+			To:   sub.Apply(ty.To),
+		}
+	case ListType:
+		return ListType{
+			Elem: sub.Apply(ty.Elem),
+		}
+	case TupleType:
+		var elems []Type
+		for _, e := range ty.Elems {
+			elems = append(elems, sub.Apply(e))
+		}
+		return TupleType{Elems: elems}
+	}
+	return t
+}
+
+func (sub Substitution) ApplyScheme(s Scheme) Scheme {
+	cleanSub := make(Substitution)
+	bound := make(map[int]bool)
+	for _, v := range s.Vars {
+		bound[v] = true
+	}
+	for k, v := range sub {
+		if !bound[k] {
+			cleanSub[k] = v
+		}
+	}
+	return Scheme{
+		Vars: s.Vars,
+		Ty:   cleanSub.Apply(s.Ty),
+	}
+}
+
+func (sub Substitution) ApplyEnv(env *TypeEnv) *TypeEnv {
+	next := NewTypeEnv(env.Parent)
+	for k, v := range env.Map {
+		next.Map[k] = sub.ApplyScheme(v)
+	}
+	return next
+}
+
+func (s1 Substitution) Compose(s2 Substitution) Substitution {
+	res := make(Substitution)
+	for k, v := range s2 {
+		res[k] = s1.Apply(v)
+	}
+	for k, v := range s1 {
+		if _, ok := res[k]; !ok {
+			res[k] = v
+		}
+	}
+	return res
+}
+
+func (s1 Substitution) Unify(t1, t2 Type) (Substitution, error) {
+	t1 = s1.Apply(t1)
+	t2 = s1.Apply(t2)
+
+	if ty1, ok := t1.(VarType); ok {
+		return s1.bind(ty1.Id, t2)
+	}
+	if ty2, ok := t2.(VarType); ok {
+		return s1.bind(ty2.Id, t1)
+	}
+
+	switch ty1 := t1.(type) {
+	case PrimType:
+		if ty2, ok := t2.(PrimType); ok && ty1 == ty2 {
+			return s1, nil
+		}
+		return nil, fmt.Errorf("cannot unify %s and %s", t1, t2)
+	case FunType:
+		if ty2, ok := t2.(FunType); ok {
+			s2, err := s1.Unify(ty1.From, ty2.From)
+			if err != nil {
+				return nil, err
+			}
+			return s2.Unify(ty1.To, ty2.To)
+		}
+		return nil, fmt.Errorf("cannot unify %s and %s", t1, t2)
+	case ListType:
+		if ty2, ok := t2.(ListType); ok {
+			return s1.Unify(ty1.Elem, ty2.Elem)
+		}
+		return nil, fmt.Errorf("cannot unify %s and %s", t1, t2)
+	case TupleType:
+		if ty2, ok := t2.(TupleType); ok {
+			if len(ty1.Elems) != len(ty2.Elems) {
+				return nil, fmt.Errorf("cannot unify %s and %s", t1, t2)
+			}
+			sCurr := s1
+			var err error
+			for i := range ty1.Elems {
+				sCurr, err = sCurr.Unify(ty1.Elems[i], ty2.Elems[i])
+				if err != nil {
+					return nil, err
+				}
+			}
+			return sCurr, nil
+		}
+		return nil, fmt.Errorf("cannot unify %s and %s", t1, t2)
+	}
+
+	return nil, fmt.Errorf("cannot unify %s and %s", t1, t2)
+}
+
+func (s Substitution) bind(id int, t Type) (Substitution, error) {
+	if v, ok := t.(VarType); ok && v.Id == id {
+		return s, nil
+	}
+	if occurs(id, t) {
+		return nil, fmt.Errorf("occurs check failed (infinite type): %s in %s", VarType{Id: id}, t)
+	}
+	newSub := make(Substitution)
+	newSub[id] = t
+	return newSub.Compose(s), nil
+}
+
+func occurs(id int, t Type) bool {
+	switch ty := t.(type) {
+	case VarType:
+		return ty.Id == id
+	case FunType:
+		return occurs(id, ty.From) || occurs(id, ty.To)
+	case ListType:
+		return occurs(id, ty.Elem)
+	case TupleType:
+		for _, e := range ty.Elems {
+			if occurs(id, e) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func freeVars(t Type) map[int]bool {
+	f := make(map[int]bool)
+	switch ty := t.(type) {
+	case VarType:
+		f[ty.Id] = true
+	case FunType:
+		for k := range freeVars(ty.From) {
+			f[k] = true
+		}
+		for k := range freeVars(ty.To) {
+			f[k] = true
+		}
+	case ListType:
+		for k := range freeVars(ty.Elem) {
+			f[k] = true
+		}
+	case TupleType:
+		for _, e := range ty.Elems {
+			for k := range freeVars(e) {
+				f[k] = true
+			}
+		}
+	}
+	return f
+}
+
+func freeVarsScheme(s Scheme) map[int]bool {
+	f := freeVars(s.Ty)
+	for _, v := range s.Vars {
+		delete(f, v)
+	}
+	return f
+}
+
+func freeVarsEnv(env *TypeEnv) map[int]bool {
+	f := make(map[int]bool)
+	for curr := env; curr != nil; curr = curr.Parent {
+		for _, s := range curr.Map {
+			for k := range freeVarsScheme(s) {
+				f[k] = true
+			}
+		}
+	}
+	return f
+}
+
+func Generalize(env *TypeEnv, t Type) Scheme {
+	envFree := freeVarsEnv(env)
+	tFree := freeVars(t)
+	var bound []int
+	for k := range tFree {
+		if !envFree[k] {
+			bound = append(bound, k)
+		}
+	}
+	return Scheme{Vars: bound, Ty: t}
+}
+
+type TypeChecker struct {
+	nextVarId int
+}
+
+func NewTypeChecker() *TypeChecker {
+	return &TypeChecker{nextVarId: 0}
+}
+
+func (tc *TypeChecker) Fresh() VarType {
+	id := tc.nextVarId
+	tc.nextVarId++
+	return VarType{Id: id}
+}
+
+func (tc *TypeChecker) Instantiate(s Scheme) Type {
+	sub := make(Substitution)
+	for _, v := range s.Vars {
+		sub[v] = tc.Fresh()
+	}
+	return sub.Apply(s.Ty)
+}
+
+func (tc *TypeChecker) Infer(env *TypeEnv, node ast.Node, sub Substitution) (Type, Substitution, error) {
+	switch n := node.(type) {
+	case ast.IntNode:
+		return TInt, sub, nil
+	case ast.BoolNode:
+		return TBool, sub, nil
+	case ast.CharNode:
+		return TChar, sub, nil
+	case ast.NilNode:
+		elem := tc.Fresh()
+		return ListType{Elem: elem}, sub, nil
+
+	case ast.ConsNode:
+		tH, sub1, err := tc.Infer(env, n.Head, sub)
+		if err != nil {
+			return nil, nil, err
+		}
+		tT, sub2, err := tc.Infer(env, n.Tail, sub1)
+		if err != nil {
+			return nil, nil, err
+		}
+		sub3, err := sub2.Unify(tT, ListType{Elem: tH})
+		if err != nil {
+			return nil, nil, fmt.Errorf("list cons type error: %w", err)
+		}
+		return sub3.Apply(tT), sub3, nil
+
+	case ast.TupleNode:
+		var elems []Type
+		sCurr := sub
+		for _, e := range n.Elems {
+			tE, sNext, err := tc.Infer(env, e, sCurr)
+			if err != nil {
+				return nil, nil, err
+			}
+			elems = append(elems, tE)
+			sCurr = sNext
+		}
+		for i := range elems {
+			elems[i] = sCurr.Apply(elems[i])
+		}
+		return TupleType{Elems: elems}, sCurr, nil
+
+	case ast.VarNode:
+		s, ok := env.Lookup(n.Name)
+		if !ok {
+			return nil, nil, fmt.Errorf("unbound variable: %s", n.Name)
+		}
+		instTy := tc.Instantiate(s)
+		return sub.Apply(instTy), sub, nil
+
+	case ast.LamNode:
+		paramTy := tc.Fresh()
+		extendedEnv := env.Extend(n.Var, Scheme{Vars: nil, Ty: paramTy})
+		bodyTy, sub1, err := tc.Infer(extendedEnv, n.Body, sub)
+		if err != nil {
+			return nil, nil, err
+		}
+		resTy := FunType{
+			From: sub1.Apply(paramTy),
+			To:   bodyTy,
+		}
+		return resTy, sub1, nil
+
+	case ast.AppNode:
+		tL, sub1, err := tc.Infer(env, n.Left, sub)
+		if err != nil {
+			return nil, nil, err
+		}
+		tR, sub2, err := tc.Infer(env, n.Right, sub1)
+		if err != nil {
+			return nil, nil, err
+		}
+		resTy := tc.Fresh()
+		sub3, err := sub2.Unify(tL, FunType{From: tR, To: resTy})
+		if err != nil {
+			return nil, nil, fmt.Errorf("function application type error: %w", err)
+		}
+		return sub3.Apply(resTy), sub3, nil
+
+	case ast.LetNode:
+		envPrime := env
+		var bindingsTypes []Type
+		var bindingsNames []string
+		sCurr := sub
+
+		for _, b := range n.Bindings {
+			selfTy := tc.Fresh()
+			envPrime = envPrime.Extend(b.Name, Scheme{Vars: nil, Ty: selfTy})
+			bindingsTypes = append(bindingsTypes, selfTy)
+			bindingsNames = append(bindingsNames, b.Name)
+		}
+
+		for idx, b := range n.Bindings {
+			tB, sNext, err := tc.Infer(envPrime, b.Expr, sCurr)
+			if err != nil {
+				return nil, nil, err
+			}
+			sNext2, err := sNext.Unify(bindingsTypes[idx], tB)
+			if err != nil {
+				return nil, nil, fmt.Errorf("type error in local binding '%s': %w", b.Name, err)
+			}
+			sCurr = sNext2
+		}
+
+		envGeneralized := env
+		for idx, name := range bindingsNames {
+			finalTy := sCurr.Apply(bindingsTypes[idx])
+			scheme := Generalize(sCurr.ApplyEnv(envGeneralized), finalTy)
+			envGeneralized = envGeneralized.Extend(name, scheme)
+		}
+
+		return tc.Infer(envGeneralized, n.Body, sCurr)
+
+	case ast.IfNode:
+		tCond, sub1, err := tc.Infer(env, n.Cond, sub)
+		if err != nil {
+			return nil, nil, err
+		}
+		sub2, err := sub1.Unify(tCond, TBool)
+		if err != nil {
+			return nil, nil, fmt.Errorf("if condition must be Bool: %w", err)
+		}
+		tThen, sub3, err := tc.Infer(env, n.Then, sub2)
+		if err != nil {
+			return nil, nil, err
+		}
+		tElse, sub4, err := tc.Infer(env, n.Else, sub3)
+		if err != nil {
+			return nil, nil, err
+		}
+		sub5, err := sub4.Unify(tThen, tElse)
+		if err != nil {
+			return nil, nil, fmt.Errorf("then/else branches must have the same type: %w", err)
+		}
+		return sub5.Apply(tThen), sub5, nil
+
+	case ast.IfZeroNode:
+		tCond, sub1, err := tc.Infer(env, n.Cond, sub)
+		if err != nil {
+			return nil, nil, err
+		}
+		sub2, err := sub1.Unify(tCond, TInt)
+		if err != nil {
+			return nil, nil, fmt.Errorf("ifzero condition must be Int: %w", err)
+		}
+		tThen, sub3, err := tc.Infer(env, n.Then, sub2)
+		if err != nil {
+			return nil, nil, err
+		}
+		tElse, sub4, err := tc.Infer(env, n.Else, sub3)
+		if err != nil {
+			return nil, nil, err
+		}
+		sub5, err := sub4.Unify(tThen, tElse)
+		if err != nil {
+			return nil, nil, fmt.Errorf("then/else branches must have the same type: %w", err)
+		}
+		return sub5.Apply(tThen), sub5, nil
+
+	case ast.IfNilNode:
+		tCond, sub1, err := tc.Infer(env, n.Cond, sub)
+		if err != nil {
+			return nil, nil, err
+		}
+		elem := tc.Fresh()
+		sub2, err := sub1.Unify(tCond, ListType{Elem: elem})
+		if err != nil {
+			return nil, nil, fmt.Errorf("ifnil condition must be a List: %w", err)
+		}
+		tThen, sub3, err := tc.Infer(env, n.Then, sub2)
+		if err != nil {
+			return nil, nil, err
+		}
+		tElse, sub4, err := tc.Infer(env, n.Else, sub3)
+		if err != nil {
+			return nil, nil, err
+		}
+		sub5, err := sub4.Unify(tThen, tElse)
+		if err != nil {
+			return nil, nil, fmt.Errorf("then/else branches must have the same type: %w", err)
+		}
+		return sub5.Apply(tThen), sub5, nil
+
+	case ast.ProjNode:
+		tT, sub1, err := tc.Infer(env, n.Tuple, sub)
+		if err != nil {
+			return nil, nil, err
+		}
+		tTuple, ok := sub1.Apply(tT).(TupleType)
+		if !ok {
+			var freshElems []Type
+			for i := 0; i <= n.Index; i++ {
+				freshElems = append(freshElems, tc.Fresh())
+			}
+			tTupleObj := TupleType{Elems: freshElems}
+			sub2, err := sub1.Unify(tT, tTupleObj)
+			if err != nil {
+				return nil, nil, fmt.Errorf("proj expects a tuple: %w", err)
+			}
+			tTuple = sub2.Apply(tTupleObj).(TupleType)
+			sub1 = sub2
+		}
+		if n.Index < 0 || n.Index >= len(tTuple.Elems) {
+			return nil, nil, fmt.Errorf("projection index %d out of bounds for tuple %s", n.Index, tTuple)
+		}
+		return sub1.Apply(tTuple.Elems[n.Index]), sub1, nil
+
+	case ast.AddNode, ast.SubNode, ast.MulNode, ast.DivNode, ast.ModNode:
+		var leftNode, rightNode ast.Node
+		var opName string
+		switch op := n.(type) {
+		case ast.AddNode: leftNode, rightNode, opName = op.Left, op.Right, "+"
+		case ast.SubNode: leftNode, rightNode, opName = op.Left, op.Right, "-"
+		case ast.MulNode: leftNode, rightNode, opName = op.Left, op.Right, "*"
+		case ast.DivNode: leftNode, rightNode, opName = op.Left, op.Right, "/"
+		case ast.ModNode: leftNode, rightNode, opName = op.Left, op.Right, "mod"
+		}
+		tL, sub1, err := tc.Infer(env, leftNode, sub)
+		if err != nil {
+			return nil, nil, err
+		}
+		tR, sub2, err := tc.Infer(env, rightNode, sub1)
+		if err != nil {
+			return nil, nil, err
+		}
+		sub3, err := sub2.Unify(tL, TInt)
+		if err != nil {
+			return nil, nil, fmt.Errorf("operator '%s' expects Int: %w", opName, err)
+		}
+		sub4, err := sub3.Unify(tR, TInt)
+		if err != nil {
+			return nil, nil, fmt.Errorf("operator '%s' expects Int: %w", opName, err)
+		}
+		return TInt, sub4, nil
+
+	case ast.EqNode, ast.NeNode:
+		var leftNode, rightNode ast.Node
+		var opName string
+		switch op := n.(type) {
+		case ast.EqNode: leftNode, rightNode, opName = op.Left, op.Right, "=="
+		case ast.NeNode: leftNode, rightNode, opName = op.Left, op.Right, "~="
+		}
+		tL, sub1, err := tc.Infer(env, leftNode, sub)
+		if err != nil {
+			return nil, nil, err
+		}
+		tR, sub2, err := tc.Infer(env, rightNode, sub1)
+		if err != nil {
+			return nil, nil, err
+		}
+		sub3, err := sub2.Unify(tL, tR)
+		if err != nil {
+			return nil, nil, fmt.Errorf("operator '%s' type error: cannot compare %s and %s", opName, tL, tR)
+		}
+		return TBool, sub3, nil
+
+	case ast.LtNode, ast.GtNode, ast.LeNode, ast.GeNode:
+		var leftNode, rightNode ast.Node
+		var opName string
+		switch op := n.(type) {
+		case ast.LtNode: leftNode, rightNode, opName = op.Left, op.Right, "<"
+		case ast.GtNode: leftNode, rightNode, opName = op.Left, op.Right, ">"
+		case ast.LeNode: leftNode, rightNode, opName = op.Left, op.Right, "<="
+		case ast.GeNode: leftNode, rightNode, opName = op.Left, op.Right, ">="
+		}
+		tL, sub1, err := tc.Infer(env, leftNode, sub)
+		if err != nil {
+			return nil, nil, err
+		}
+		tR, sub2, err := tc.Infer(env, rightNode, sub1)
+		if err != nil {
+			return nil, nil, err
+		}
+		sub3, err := sub2.Unify(tL, TInt)
+		if err != nil {
+			return nil, nil, fmt.Errorf("operator '%s' expects Int: %w", opName, err)
+		}
+		sub4, err := sub3.Unify(tR, TInt)
+		if err != nil {
+			return nil, nil, fmt.Errorf("operator '%s' expects Int: %w", opName, err)
+		}
+		return TBool, sub4, nil
+
+	case ast.AppendNode, ast.DiffNode:
+		var leftNode, rightNode ast.Node
+		var opName string
+		switch op := n.(type) {
+		case ast.AppendNode: leftNode, rightNode, opName = op.Left, op.Right, "++"
+		case ast.DiffNode: leftNode, rightNode, opName = op.Left, op.Right, "--"
+		}
+		tL, sub1, err := tc.Infer(env, leftNode, sub)
+		if err != nil {
+			return nil, nil, err
+		}
+		tR, sub2, err := tc.Infer(env, rightNode, sub1)
+		if err != nil {
+			return nil, nil, err
+		}
+		elem := tc.Fresh()
+		sub3, err := sub2.Unify(tL, ListType{Elem: elem})
+		if err != nil {
+			return nil, nil, fmt.Errorf("operator '%s' expects List: %w", opName, err)
+		}
+		sub4, err := sub3.Unify(tR, tL)
+		if err != nil {
+			return nil, nil, fmt.Errorf("operator '%s' expects matching List types: %w", opName, err)
+		}
+		return sub4.Apply(tL), sub4, nil
+
+	case ast.RangeNode:
+		tS, sub1, err := tc.Infer(env, n.Start, sub)
+		if err != nil {
+			return nil, nil, err
+		}
+		tE, sub2, err := tc.Infer(env, n.End, sub1)
+		if err != nil {
+			return nil, nil, err
+		}
+		sub3, err := sub2.Unify(tS, TInt)
+		if err != nil {
+			return nil, nil, fmt.Errorf("range start must be Int: %w", err)
+		}
+		sub4, err := sub3.Unify(tE, TInt)
+		if err != nil {
+			return nil, nil, fmt.Errorf("range end must be Int: %w", err)
+		}
+		return ListType{Elem: TInt}, sub4, nil
+
+	case ast.ZFNode:
+		envCurr := env
+		sCurr := sub
+		var err error
+		for _, q := range n.Quals {
+			switch qual := q.(type) {
+			case ast.GeneratorQual:
+				tSrc, sNext, err := tc.Infer(envCurr, qual.Src, sCurr)
+				if err != nil {
+					return nil, nil, err
+				}
+				elem := tc.Fresh()
+				sNext2, err := sNext.Unify(tSrc, ListType{Elem: elem})
+				if err != nil {
+					return nil, nil, fmt.Errorf("comprehension generator source must be a List: %w", err)
+				}
+				sCurr = sNext2
+				envCurr, err = tc.bindPat(envCurr, qual.Pat, sCurr.Apply(elem))
+				if err != nil {
+					return nil, nil, err
+				}
+			case ast.FilterQual:
+				tCond, sNext, err := tc.Infer(envCurr, qual.Cond, sCurr)
+				if err != nil {
+					return nil, nil, err
+				}
+				sNext2, err := sNext.Unify(tCond, TBool)
+				if err != nil {
+					return nil, nil, fmt.Errorf("comprehension filter must be Bool: %w", err)
+				}
+				sCurr = sNext2
+			}
+		}
+		tBody, sFinal, err := tc.Infer(envCurr, n.Body, sCurr)
+		if err != nil {
+			return nil, nil, err
+		}
+		return ListType{Elem: sFinal.Apply(tBody)}, sFinal, nil
+
+	case ast.ZFGeneratorNode:
+		return nil, nil, fmt.Errorf("unsupported direct ZFGeneratorNode type check")
+	case ast.MatchErrorNode:
+		return tc.Fresh(), sub, nil
+	case ast.ThunkNode:
+		if n.Cell != nil && n.Cell.State == ast.Evaluated {
+			return tc.Infer(env, n.Cell.Val, sub)
+		}
+		// If it's a thunk, we can't type check its inner expression easily without potentially
+		// causing issue, but we can type check the thunk's Expr field if present.
+		// Wait, a ThunkNode always has a Cell or can be evaluated. If n.Cell is nil, we can look at other fields,
+		// but standard ThunkNode has Cell. If n.Cell has state Evaluated, we infer it. Otherwise, we can return a fresh variable or infer the cell's initial value expression.
+		// Actually, ThunkNode has no other AST Node field except Val inside the Cell when evaluated.
+		// Wait! During type checking before execution, we don't have ThunkNodes in the AST at all!
+		// They are only created at runtime during Whnf evaluation. So type checking the static AST parsed from source will never encounter a ThunkNode or ClosureNode.
+		// But in case any runtime evaluation mixes with type inference, returning a fresh variable is safe.
+		return tc.Fresh(), sub, nil
+	case ast.ClosureNode:
+		// Similar to LamNode: Var is param, Body is body, Env is closure environment.
+		paramTy := tc.Fresh()
+		extendedEnv := env.Extend(n.Var, Scheme{Vars: nil, Ty: paramTy})
+		bodyTy, sub1, err := tc.Infer(extendedEnv, n.Body, sub)
+		if err != nil {
+			return nil, nil, err
+		}
+		resTy := FunType{
+			From: sub1.Apply(paramTy),
+			To:   bodyTy,
+		}
+		return resTy, sub1, nil
+	}
+
+	return nil, nil, fmt.Errorf("unknown AST node type: %T", node)
+}
+
+func (tc *TypeChecker) bindPat(env *TypeEnv, pat ast.Pat, t Type) (*TypeEnv, error) {
+	switch p := pat.(type) {
+	case ast.PatVar:
+		if p.Name == "_" {
+			return env, nil
+		}
+		return env.Extend(p.Name, Scheme{Vars: nil, Ty: t}), nil
+	case ast.PatInt:
+		return env, nil
+	case ast.PatBool:
+		return env, nil
+	case ast.PatChar:
+		return env, nil
+	case ast.PatNil:
+		return env, nil
+	case ast.PatCons:
+		var elem Type
+		if lt, ok := t.(ListType); ok {
+			elem = lt.Elem
+		} else {
+			elem = tc.Fresh()
+		}
+		envH, err := tc.bindPat(env, p.Head, elem)
+		if err != nil {
+			return nil, err
+		}
+		return tc.bindPat(envH, p.Tail, ListType{Elem: elem})
+	case ast.PatTuple:
+		var elems []Type
+		if tt, ok := t.(TupleType); ok && len(tt.Elems) == len(p.Elems) {
+			elems = tt.Elems
+		} else {
+			for i := 0; i < len(p.Elems); i++ {
+				elems = append(elems, tc.Fresh())
+			}
+		}
+		envCurr := env
+		var err error
+		for i := range p.Elems {
+			envCurr, err = tc.bindPat(envCurr, p.Elems[i], elems[i])
+			if err != nil {
+				return nil, err
+			}
+		}
+		return envCurr, nil
+	}
+	return env, nil
+}
+
+func DefaultTypeEnv() *TypeEnv {
+	env := NewTypeEnv(nil)
+
+	env.Map["True"] = Scheme{Vars: nil, Ty: TBool}
+	env.Map["False"] = Scheme{Vars: nil, Ty: TBool}
+
+	env.Map["hd"] = Scheme{Vars: []int{0}, Ty: FunType{From: ListType{Elem: VarType{Id: 0}}, To: VarType{Id: 0}}}
+	env.Map["tl"] = Scheme{Vars: []int{0}, Ty: FunType{From: ListType{Elem: VarType{Id: 0}}, To: ListType{Elem: VarType{Id: 0}}}}
+	env.Map["show"] = Scheme{Vars: []int{0}, Ty: FunType{From: VarType{Id: 0}, To: ListType{Elem: TChar}}}
+	env.Map["read"] = Scheme{Vars: []int{0}, Ty: FunType{From: ListType{Elem: TChar}, To: VarType{Id: 0}}}
+	env.Map["lines"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TChar}, To: ListType{Elem: ListType{Elem: TChar}}}}
+	env.Map["numval"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TChar}, To: TInt}}
+	env.Map["length"] = Scheme{Vars: []int{0}, Ty: FunType{From: ListType{Elem: VarType{Id: 0}}, To: TInt}}
+	env.Map["reverse"] = Scheme{Vars: []int{0}, Ty: FunType{From: ListType{Elem: VarType{Id: 0}}, To: ListType{Elem: VarType{Id: 0}}}}
+
+	return env
+}

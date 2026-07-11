@@ -250,7 +250,7 @@ func (p *Parser) parseOr() ast.Node {
 	left := p.parseAnd()
 	if p.peek().Type == lexer.TOK_OR {
 		p.consume()
-		return ast.IfNode{Cond: left, Then: ast.IntNode{Val: 1}, Else: p.parseOr()}
+		return ast.IfNode{Cond: left, Then: ast.BoolNode{Val: true}, Else: p.parseOr()}
 	}
 	return left
 }
@@ -259,7 +259,7 @@ func (p *Parser) parseAnd() ast.Node {
 	left := p.parseCons()
 	if p.peek().Type == lexer.TOK_AND {
 		p.consume()
-		return ast.IfNode{Cond: left, Then: p.parseAnd(), Else: ast.IntNode{Val: 0}}
+		return ast.IfNode{Cond: left, Then: p.parseAnd(), Else: ast.BoolNode{Val: false}}
 	}
 	return left
 }

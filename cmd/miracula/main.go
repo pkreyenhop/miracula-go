@@ -7,6 +7,7 @@ import (
 	"runtime/pprof"
 	"pkreyenhop.com/miracula-go/ast"
 	"pkreyenhop.com/miracula-go/repl"
+	"pkreyenhop.com/miracula-go/typecheck"
 )
 
 func main() {
@@ -39,19 +40,22 @@ func main() {
 	isReplMode := scriptFile == "script.m"
 
 	env := ast.NewEnv()
+	typeEnv := typecheck.DefaultTypeEnv()
 	var err error
-	stdenvEnv, err := repl.LoadScriptFile("stdenv.m", env)
+	stdenvEnv, stdenvTypeEnv, err := repl.LoadScriptFile("stdenv.m", env, typeEnv)
 	if err != nil {
 		fmt.Printf("Error loading stdenv.m: %v\n", err)
 		os.Exit(1)
 	}
 	env = stdenvEnv
+	typeEnv = stdenvTypeEnv
 
-	scriptEnv, err := repl.LoadScriptFile(scriptFile, env)
+	scriptEnv, scriptTypeEnv, err := repl.LoadScriptFile(scriptFile, env, typeEnv)
 	if err != nil {
 		fmt.Printf("Error loading %s: %v\n", scriptFile, err)
 	} else {
 		env = scriptEnv
+		typeEnv = scriptTypeEnv
 	}
 
 	if isReplMode {
@@ -66,5 +70,5 @@ func main() {
 		fmt.Println("==================================================")
 	}
 
-	repl.RunREPLDirect(env, scriptFile)
+	repl.RunREPLDirect(env, typeEnv, scriptFile)
 }

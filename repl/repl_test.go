@@ -6,6 +6,7 @@ import (
 	"testing"
 	"pkreyenhop.com/miracula-go/ast"
 	"pkreyenhop.com/miracula-go/eval"
+	"pkreyenhop.com/miracula-go/typecheck"
 )
 
 func TestIsWordChar(t *testing.T) {
@@ -49,7 +50,8 @@ y = 100
 	}
 
 	env := ast.NewEnv()
-	loadedEnv, err := LoadScriptFile(scriptPath, env)
+	typeEnv := typecheck.DefaultTypeEnv()
+	loadedEnv, _, err := LoadScriptFile(scriptPath, env, typeEnv)
 	if err != nil {
 		t.Fatalf("LoadScriptFile failed: %v", err)
 	}
