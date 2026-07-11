@@ -322,10 +322,21 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 			return ast.TupleNode{Elems: elmsPrime}
 		case ast.VarNode:
 			name := node.Name
-			if name == "hd" || name == "tl" || name == "show" || name == "read" || name == "lines" || name == "numval" || name == "length" {
+			switch name {
+			case "hd", "tl", "show", "read", "lines", "numval", "length":
 				return node
 			}
-			val, ok := env.Lookup(name)
+			var val ast.Node
+			var ok bool
+			if env.Name == name {
+				val = env.Val
+				ok = true
+			} else if env.Parent != nil && env.Parent.Name == name {
+				val = env.Parent.Val
+				ok = true
+			} else {
+				val, ok = env.Lookup(name)
+			}
 			if !ok {
 				panic(ast.RuntimeError{Msg: "Unbound variable: " + name})
 			}
@@ -673,13 +684,29 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 					panic(ast.RuntimeError{Msg: "Unbound variable: " + f.Name})
 				}
 			case ast.ClosureNode:
-				sharedThunk := ast.ThunkNode{Cell: &ast.ThunkCell{State: ast.Unevaluated, Expr: node.Right, Env: env}}
-				env = f.Env.Extend(f.Var, sharedThunk)
+				var valNode ast.Node
+				switch r := node.Right.(type) {
+				case ast.IntNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.ThunkNode, ast.MatchErrorNode:
+					valNode = r
+				case ast.LamNode:
+					valNode = ast.ClosureNode{Var: r.Var, Body: r.Body, Env: env}
+				default:
+					valNode = ast.ThunkNode{Cell: &ast.ThunkCell{State: ast.Unevaluated, Expr: node.Right, Env: env}}
+				}
+				env = f.Env.Extend(f.Var, valNode)
 				n = f.Body
 				continue
 			case ast.LamNode:
-				sharedThunk := ast.ThunkNode{Cell: &ast.ThunkCell{State: ast.Unevaluated, Expr: node.Right, Env: env}}
-				env = env.Extend(f.Var, sharedThunk)
+				var valNode ast.Node
+				switch r := node.Right.(type) {
+				case ast.IntNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.ThunkNode, ast.MatchErrorNode:
+					valNode = r
+				case ast.LamNode:
+					valNode = ast.ClosureNode{Var: r.Var, Body: r.Body, Env: env}
+				default:
+					valNode = ast.ThunkNode{Cell: &ast.ThunkCell{State: ast.Unevaluated, Expr: node.Right, Env: env}}
+				}
+				env = env.Extend(f.Var, valNode)
 				n = f.Body
 				continue
 			default:

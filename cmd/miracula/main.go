@@ -1,19 +1,38 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
+	"runtime/pprof"
 	"pkreyenhop.com/miracula-go/ast"
 	"pkreyenhop.com/miracula-go/repl"
 )
 
 func main() {
-	args := os.Args[1:]
+	cpuprofile := flag.String("cpuprofile", "", "write cpu profile to `file`")
+	flag.Parse()
+
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			fmt.Printf("Error creating CPU profile: %v\n", err)
+			os.Exit(1)
+		}
+		defer f.Close()
+		if err := pprof.StartCPUProfile(f); err != nil {
+			fmt.Printf("Error starting CPU profile: %v\n", err)
+			os.Exit(1)
+		}
+		defer pprof.StopCPUProfile()
+	}
+
+	args := flag.Args()
 	scriptFile := "script.m"
 	if len(args) == 1 {
 		scriptFile = args[0]
 	} else if len(args) > 1 {
-		fmt.Println("Usage: miracula [script_file]")
+		fmt.Println("Usage: miracula [-cpuprofile=file] [script_file]")
 		os.Exit(1)
 	}
 
