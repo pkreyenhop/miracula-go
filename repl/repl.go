@@ -429,19 +429,21 @@ func RunREPLDirect(env *ast.Env, scriptFile string) {
 		currentLine := firstLine
 		for {
 			trimmedRight := strings.TrimRightFunc(currentLine, unicode.IsSpace)
-			if strings.HasSuffix(trimmedRight, "\\") {
-				lineWithoutSlash := strings.TrimSuffix(trimmedRight, "\\")
+			if strings.HasSuffix(trimmedRight, "\\\\") {
+				lineWithoutSlash := strings.TrimSuffix(trimmedRight, "\\\\")
 				lines = append(lines, lineWithoutSlash)
 
 				var nextLine string
 				var nextOk bool
+				promptStr := "miranda> "
+				continuationPrompt := strings.Repeat(" ", len(promptStr)-2) + "> "
 				if interactive {
-					nextLine, history, nextOk = readLine("> ", history, env)
+					nextLine, history, nextOk = readLine(continuationPrompt, history, env)
 					if !nextOk {
 						break
 					}
 				} else {
-					fmt.Print("> ")
+					fmt.Print(continuationPrompt)
 					if !scanner.Scan() {
 						break
 					}
@@ -454,13 +456,29 @@ func RunREPLDirect(env *ast.Env, scriptFile string) {
 			}
 		}
 
-		fullInput := strings.Join(lines, " ")
+		fullInput := strings.Join(lines, "\n")
 		fullInputTrimmed := strings.TrimSpace(fullInput)
 		if fullInputTrimmed == "" {
 			continue
 		}
 
-		tokens := lexer.Tokenize(fullInput)
+		var tokens []lexer.Token
+		inputLines := strings.Split(fullInput, "\n")
+		var layoutLines []lexer.LayoutLine
+		for lineIdx, lineText := range inputLines {
+			lineToks := lexer.TokenizeWithPos(lineText, lineIdx+1)
+			var filtered []lexer.Token
+			for _, t := range lineToks {
+				if t.Type != lexer.TOK_EOF {
+					filtered = append(filtered, t)
+				}
+			}
+			wrapped := lexer.WrapWhereOnLine(filtered)
+			if len(wrapped) > 0 {
+				layoutLines = append(layoutLines, lexer.LayoutLine{Indent: 0, Toks: wrapped})
+			}
+		}
+		tokens = lexer.ApplyLayout(layoutLines)
 
 		func() {
 			defer func() {
@@ -476,16 +494,52 @@ func RunREPLDirect(env *ast.Env, scriptFile string) {
 					}
 				}
 			}()
-			p := parser.NewParser(tokens)
-			stmt := p.Parse()
-			switch s := stmt.(type) {
-			case parser.ScriptBindStmt:
-				finalLambda := parser.DesugarEquations([]parser.RawBinding{s.Binding})
-				env = env.Extend(s.Binding.FName, finalLambda)
-				fmt.Printf("Defined variable: %s\n", s.Binding.FName)
-			case parser.REPLEvalStmt:
+			
+			segments := lexer.SplitTokens(tokens)
+			if len(segments) == 0 {
+				return
+			}
+
+			var bindings []parser.RawBinding
+			var evalStmt parser.REPLEvalStmt
+			isMultiBind := false
+
+			for _, seg := range segments {
+				p := parser.NewParser(seg)
+				stmt := p.Parse()
+				switch s := stmt.(type) {
+				case parser.ScriptBindStmt:
+					bindings = append(bindings, s.Binding)
+					isMultiBind = true
+				case parser.REPLEvalStmt:
+					if isMultiBind {
+						panic(ast.RuntimeError{Msg: "Cannot mix binding statements and evaluation expressions"})
+					}
+					evalStmt = s
+				}
+			}
+
+			if isMultiBind {
+				grouped := make(map[string][]parser.RawBinding)
+				var order []string
+				for _, b := range bindings {
+					if _, ok := grouped[b.FName]; !ok {
+						order = append(order, b.FName)
+					}
+					grouped[b.FName] = append(grouped[b.FName], b)
+				}
+
+				accEnv := env
+				for _, name := range order {
+					eqList := grouped[name]
+					finalLambda := parser.DesugarEquations(eqList)
+					accEnv = accEnv.Extend(name, finalLambda)
+					fmt.Printf("Defined variable: %s\n", name)
+				}
+				env = accEnv
+			} else {
 				startTime := time.Now()
-				result := eval.Whnf(env, s.Expr)
+				result := eval.Whnf(env, evalStmt.Expr)
 				duration := time.Since(startTime).Milliseconds()
 
 				sVal, isStr := eval.IsString(env, result)
