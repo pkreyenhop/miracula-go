@@ -29,6 +29,16 @@ Miracula parses high-level surface syntax construct and desugars them into core 
 - **Function Composition (`f . g`)**: Desugars to `Lam (cx, App (f, App (g, Var cx)))` with a fresh variable `cx`.
 - **List Comprehensions (`[ e | q1; q2 ]`)**: Represented in the AST as `ZF (e, [q1, q2])` and evaluated dynamically via lazy generators.
 
+## Directory Structure
+
+The project follows an idiomatic Go layout:
+- [ast/](file:///home/pkreyenhop/src/miracula-go/ast/ast.go): Defines AST types, pattern matching qualifiers, environment scope chains (`Env`), and execution errors.
+- [cmd/miracula/](file:///home/pkreyenhop/src/miracula-go/cmd/miracula/main.go): Command-line entry point. Handles arguments, loads the stdenv, and spins up the TTY REPL.
+- [eval/](file:///home/pkreyenhop/src/miracula-go/eval/eval.go): Weak Head Normal Form (WHNF) reducer and lazy graph reduction evaluation routines.
+- [lexer/](file:///home/pkreyenhop/src/miracula-go/lexer/lexer.go): Text tokenizer, layout rules, and standard list formatting wrappers.
+- [parser/](file:///home/pkreyenhop/src/miracula-go/parser/parser.go): Recursive descent parser and pattern-matching equations compiler/desugarer.
+- [repl/](file:///home/pkreyenhop/src/miracula-go/repl/repl.go): Dynamic raw terminal line editor featuring tab-autocomplete, history navigation, and Emacs hotkeys.
+
 ## How to Build and Run
 
 ### Prerequisites
@@ -37,7 +47,7 @@ Make sure you have [Go](https://go.dev/) (version 1.18 or higher) installed on y
 ### Build
 Compile the interpreter to produce a `miracula` binary:
 ```bash
-go build -o miracula main.go
+go build -o miracula cmd/miracula/main.go
 ```
 
 ### Run
