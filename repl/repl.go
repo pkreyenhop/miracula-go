@@ -378,10 +378,10 @@ func RunREPLDirect(env *ast.Env, scriptFile string) {
 	}
 
 	for {
-		var line string
+		var firstLine string
+		var ok bool
 		if interactive {
-			var ok bool
-			line, history, ok = readLine("miranda> ", history, env)
+			firstLine, history, ok = readLine("miranda> ", history, env)
 			if !ok {
 				fmt.Println("Goodbye.")
 				break
@@ -392,10 +392,10 @@ func RunREPLDirect(env *ast.Env, scriptFile string) {
 				fmt.Println("Goodbye.")
 				break
 			}
-			line = scanner.Text()
+			firstLine = scanner.Text()
 		}
 
-		lineTrimmed := strings.TrimSpace(line)
+		lineTrimmed := strings.TrimSpace(firstLine)
 		if lineTrimmed == "" {
 			continue
 		}
@@ -425,7 +425,43 @@ func RunREPLDirect(env *ast.Env, scriptFile string) {
 			continue
 		}
 
-		tokens := lexer.Tokenize(lineTrimmed)
+		var lines []string
+		currentLine := firstLine
+		for {
+			trimmedRight := strings.TrimRightFunc(currentLine, unicode.IsSpace)
+			if strings.HasSuffix(trimmedRight, "\\") {
+				lineWithoutSlash := strings.TrimSuffix(trimmedRight, "\\")
+				lines = append(lines, lineWithoutSlash)
+
+				var nextLine string
+				var nextOk bool
+				if interactive {
+					nextLine, history, nextOk = readLine("> ", history, env)
+					if !nextOk {
+						break
+					}
+				} else {
+					fmt.Print("> ")
+					if !scanner.Scan() {
+						break
+					}
+					nextLine = scanner.Text()
+				}
+				currentLine = nextLine
+			} else {
+				lines = append(lines, currentLine)
+				break
+			}
+		}
+
+		fullInput := strings.Join(lines, " ")
+		fullInputTrimmed := strings.TrimSpace(fullInput)
+		if fullInputTrimmed == "" {
+			continue
+		}
+
+		tokens := lexer.Tokenize(fullInput)
+
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -434,7 +470,7 @@ func RunREPLDirect(env *ast.Env, scriptFile string) {
 					} else if bhErr, ok := r.(ast.BlackholeError); ok {
 						fmt.Printf("Runtime Error: %s\n", bhErr.Msg)
 					} else if pe, ok := r.(parser.ParseError); ok {
-						fmt.Println(FormatParseError("<stdin>", lineTrimmed, pe))
+						fmt.Println(FormatParseError("<stdin>", fullInput, pe))
 					} else {
 						fmt.Printf("Error: %v\n", r)
 					}
