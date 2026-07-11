@@ -10,6 +10,7 @@ type Node interface {
 }
 
 type IntNode struct{ Val int }
+type BoolNode struct{ Val bool }
 type CharNode struct{ Val rune }
 type NilNode struct{}
 type ConsNode struct{ Head, Tail Node }
@@ -90,6 +91,7 @@ type LeNode struct{ Left, Right Node }
 type GeNode struct{ Left, Right Node }
 
 func (IntNode) isNode()         {}
+func (BoolNode) isNode()        {}
 func (CharNode) isNode()        {}
 func (NilNode) isNode()         {}
 func (ConsNode) isNode()        {}
@@ -136,6 +138,7 @@ type Pat interface {
 }
 
 type PatInt struct{ Val int }
+type PatBool struct{ Val bool }
 type PatChar struct{ Val rune }
 type PatVar struct{ Name string }
 type PatNil struct{}
@@ -143,6 +146,7 @@ type PatCons struct{ Head, Tail Pat }
 type PatTuple struct{ Elems []Pat }
 
 func (PatInt) isPat()   {}
+func (PatBool) isPat()  {}
 func (PatChar) isPat()  {}
 func (PatVar) isPat()   {}
 func (PatNil) isPat()   {}
@@ -198,6 +202,13 @@ func (e *Env) GetNames() []string {
 		}
 	}
 	return names
+}
+
+func NewEnv() *Env {
+	env := &Env{}
+	env = env.Extend("True", BoolNode{Val: true})
+	env = env.Extend("False", BoolNode{Val: false})
+	return env
 }
 
 // ==========================================================================

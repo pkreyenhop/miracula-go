@@ -29,7 +29,7 @@ fib n = fib (n-1) + fib (n-2)
 	}
 
 	// 2. Load the script file into the environment
-	env := &ast.Env{}
+	env := ast.NewEnv()
 	// Load standard environment if it exists in the parent directory
 	stdenvPath := filepath.Join("..", "stdenv.m")
 	if _, statErr := os.Stat(stdenvPath); statErr == nil {
@@ -97,7 +97,7 @@ fib n = fib (n-1) + fib (n-2)
 		b.Fatalf("Failed to write fib script file: %v", err)
 	}
 
-	env := &ast.Env{}
+	env := ast.NewEnv()
 	if _, statErr := os.Stat(stdenvPath); statErr == nil {
 		env, err = LoadScriptFile(stdenvPath, env)
 		if err != nil {

@@ -619,6 +619,12 @@ func (p *Parser) parsePattern() ast.Pat {
 		return ast.PatChar{Val: tok.Char}
 	case lexer.TOK_VAR:
 		p.consume()
+		if tok.Str == "True" {
+			return ast.PatBool{Val: true}
+		}
+		if tok.Str == "False" {
+			return ast.PatBool{Val: false}
+		}
 		return ast.PatVar{Name: tok.Str}
 	case lexer.TOK_LBRACK:
 		p.consume()
@@ -729,11 +735,15 @@ func DesugarEquations(eqs []RawBinding) ast.Node {
 					Else: buildDecisionTree(restEqs[1:]),
 				}
 			case ast.PatChar:
-				cond := ast.SubNode{
-					Left:  ast.EqNode{Left: ast.VarNode{Name: p}, Right: ast.CharNode{Val: pt.Val}},
-					Right: ast.IntNode{Val: 1},
+				cond := ast.EqNode{Left: ast.VarNode{Name: p}, Right: ast.CharNode{Val: pt.Val}}
+				return ast.IfNode{
+					Cond: cond,
+					Then: checkPats(pRest, patRest, treeBody),
+					Else: buildDecisionTree(restEqs[1:]),
 				}
-				return ast.IfZeroNode{
+			case ast.PatBool:
+				cond := ast.EqNode{Left: ast.VarNode{Name: p}, Right: ast.BoolNode{Val: pt.Val}}
+				return ast.IfNode{
 					Cond: cond,
 					Then: checkPats(pRest, patRest, treeBody),
 					Else: buildDecisionTree(restEqs[1:]),

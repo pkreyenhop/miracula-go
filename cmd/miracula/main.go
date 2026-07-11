@@ -38,7 +38,7 @@ func main() {
 
 	isReplMode := scriptFile == "script.m"
 
-	env := &ast.Env{}
+	env := ast.NewEnv()
 	var err error
 	stdenvEnv, err := repl.LoadScriptFile("stdenv.m", env)
 	if err != nil {

@@ -6,7 +6,7 @@ import (
 )
 
 func TestWhnfArithmetic(t *testing.T) {
-	env := &ast.Env{}
+	env := ast.NewEnv()
 	
 	// Test: 10 + 5
 	add := ast.AddNode{Left: ast.IntNode{Val: 10}, Right: ast.IntNode{Val: 5}}
@@ -58,7 +58,7 @@ func TestWhnfArithmetic(t *testing.T) {
 }
 
 func TestWhnfLazyLists(t *testing.T) {
-	env := &ast.Env{}
+	env := ast.NewEnv()
 
 	// Test Range: [1..5]
 	rng := ast.RangeNode{Start: ast.IntNode{Val: 1}, End: ast.IntNode{Val: 5}}
@@ -89,7 +89,7 @@ func TestWhnfLazyLists(t *testing.T) {
 }
 
 func TestBuiltins(t *testing.T) {
-	env := &ast.Env{}
+	env := ast.NewEnv()
 
 	// Test length [1..5]
 	lengthApp := ast.AppNode{

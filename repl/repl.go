@@ -438,7 +438,7 @@ func RunREPLDirect(env *ast.Env, scriptFile string) {
 			cmd.Stderr = os.Stderr
 			_ = cmd.Run()
 			fmt.Printf("Reloading environment profiles from %s...\n", scriptFile)
-			envWithStd, _ := LoadScriptFile("stdenv.m", &ast.Env{})
+			envWithStd, _ := LoadScriptFile("stdenv.m", ast.NewEnv())
 			reloadedEnv, err := LoadScriptFile(scriptFile, envWithStd)
 			if err != nil {
 				fmt.Printf("Error reloading: %v\n", err)

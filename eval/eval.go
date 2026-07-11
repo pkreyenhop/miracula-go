@@ -28,7 +28,7 @@ func smlMod(a, b int) int {
 
 func needsThunkCons(n ast.Node) bool {
 	switch n.(type) {
-	case ast.IntNode, ast.CharNode, ast.NilNode, ast.ThunkNode, ast.ClosureNode, ast.MatchErrorNode:
+	case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ThunkNode, ast.ClosureNode, ast.MatchErrorNode:
 		return false
 	}
 	return true
@@ -36,7 +36,7 @@ func needsThunkCons(n ast.Node) bool {
 
 func needsThunkTuple(n ast.Node) bool {
 	switch n.(type) {
-	case ast.IntNode, ast.CharNode, ast.NilNode, ast.ThunkNode, ast.ClosureNode, ast.MatchErrorNode:
+	case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ThunkNode, ast.ClosureNode, ast.MatchErrorNode:
 		return false
 	}
 	return true
@@ -70,6 +70,11 @@ func matchPattern(env *ast.Env, pat ast.Pat, node ast.Node) ([]MatchBinding, boo
 	switch p := pat.(type) {
 	case ast.PatInt:
 		if i, ok := v.(ast.IntNode); ok && p.Val == i.Val {
+			return nil, true
+		}
+		return nil, false
+	case ast.PatBool:
+		if b, ok := v.(ast.BoolNode); ok && p.Val == b.Val {
 			return nil, true
 		}
 		return nil, false
@@ -173,7 +178,7 @@ func removeOne(env *ast.Env, x ast.Node, listNode ast.Node) ast.Node {
 		return ast.NilNode{}
 	case ast.ConsNode:
 		eqH := Whnf(env, ast.EqNode{Left: x, Right: xs.Head})
-		if iH, ok := eqH.(ast.IntNode); ok && iH.Val == 1 {
+		if isTrueNode(eqH) {
 			return xs.Tail
 		}
 		tEval := removeOne(env, x, xs.Tail)
@@ -226,10 +231,24 @@ func evalZF(env *ast.Env, bodyExpr ast.Node, quals []ast.Qualifier) ast.Node {
 	panic("Unknown qualifier type")
 }
 
+func isTrueNode(n ast.Node) bool {
+	if b, ok := n.(ast.BoolNode); ok {
+		return b.Val
+	}
+	if i, ok := n.(ast.IntNode); ok {
+		return i.Val != 0
+	}
+	return false
+}
+
 func eq(env *ast.Env, v1, v2 ast.Node) bool {
 	switch x1 := v1.(type) {
 	case ast.IntNode:
 		if x2, ok := v2.(ast.IntNode); ok {
+			return x1.Val == x2.Val
+		}
+	case ast.BoolNode:
+		if x2, ok := v2.(ast.BoolNode); ok {
 			return x1.Val == x2.Val
 		}
 	case ast.CharNode:
@@ -249,9 +268,9 @@ func eq(env *ast.Env, v1, v2 ast.Node) bool {
 			return false
 		case ast.ConsNode:
 			eqH := Whnf(env, ast.EqNode{Left: x1.Head, Right: x2.Head})
-			if iH, okH := eqH.(ast.IntNode); okH && iH.Val == 1 {
+			if isTrueNode(eqH) {
 				eqT := Whnf(env, ast.EqNode{Left: x1.Tail, Right: x2.Tail})
-				if iT, okT := eqT.(ast.IntNode); okT && iT.Val == 1 {
+				if isTrueNode(eqT) {
 					return true
 				}
 			}
@@ -264,20 +283,22 @@ func eq(env *ast.Env, v1, v2 ast.Node) bool {
 			}
 			for i := range x1.Elems {
 				eqE := Whnf(env, ast.EqNode{Left: x1.Elems[i], Right: x2.Elems[i]})
-				if iE, okE := eqE.(ast.IntNode); !okE || iE.Val != 1 {
+				if !isTrueNode(eqE) {
 					return false
 				}
 			}
 			return true
 		}
 	}
-	panic(ast.RuntimeError{Msg: fmt.Sprintf("Equality expects integers, characters, lists or tuples, got: %s and %s", PrintNode(env, v1), PrintNode(env, v2))})
+	panic(ast.RuntimeError{Msg: fmt.Sprintf("Equality expects integers, booleans, characters, lists or tuples, got: %s and %s", PrintNode(env, v1), PrintNode(env, v2))})
 }
 
 func Whnf(env *ast.Env, n ast.Node) ast.Node {
 	for {
 		switch node := n.(type) {
 		case ast.IntNode:
+			return node
+		case ast.BoolNode:
 			return node
 		case ast.CharNode:
 			return node
@@ -345,7 +366,7 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 				switch cell.State {
 				case ast.Evaluated:
 					switch cv := cell.Val.(type) {
-					case ast.IntNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
+					case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
 						return cv
 					default:
 						n = cv
@@ -359,7 +380,7 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 					cell.State = ast.Evaluated
 					cell.Val = res
 					switch cv := res.(type) {
-					case ast.IntNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
+					case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
 						return cv
 					default:
 						n = cv
@@ -374,7 +395,7 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 			switch cell.State {
 			case ast.Evaluated:
 				switch cv := cell.Val.(type) {
-				case ast.IntNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
+				case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
 					return cv
 				default:
 					n = cv
@@ -388,7 +409,7 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 				cell.State = ast.Evaluated
 				cell.Val = res
 				switch cv := res.(type) {
-				case ast.IntNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
+				case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
 					return cv
 				default:
 					n = cv
@@ -397,6 +418,14 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 			}
 		case ast.IfNode:
 			condVal := Whnf(env, node.Cond)
+			if b, ok := condVal.(ast.BoolNode); ok {
+				if b.Val {
+					n = node.Then
+				} else {
+					n = node.Else
+				}
+				continue
+			}
 			if i, ok := condVal.(ast.IntNode); ok {
 				if i.Val != 0 {
 					n = node.Then
@@ -405,7 +434,7 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 				}
 				continue
 			}
-			panic(ast.RuntimeError{Msg: fmt.Sprintf("If condition must be an integer, got: %s", PrintNode(env, condVal))})
+			panic(ast.RuntimeError{Msg: fmt.Sprintf("If condition must be a boolean, got: %s", PrintNode(env, condVal))})
 		case ast.IfZeroNode:
 			condVal := Whnf(env, node.Cond)
 			if i, ok := condVal.(ast.IntNode); ok {
@@ -558,17 +587,11 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 		case ast.EqNode:
 			v1 := Whnf(env, node.Left)
 			v2 := Whnf(env, node.Right)
-			if eq(env, v1, v2) {
-				return ast.IntNode{Val: 1}
-			}
-			return ast.IntNode{Val: 0}
+			return ast.BoolNode{Val: eq(env, v1, v2)}
 		case ast.NeNode:
 			v1 := Whnf(env, node.Left)
 			v2 := Whnf(env, node.Right)
-			if eq(env, v1, v2) {
-				return ast.IntNode{Val: 0}
-			}
-			return ast.IntNode{Val: 1}
+			return ast.BoolNode{Val: !eq(env, v1, v2)}
 		case ast.LtNode:
 			v1 := Whnf(env, node.Left)
 			v2 := Whnf(env, node.Right)
@@ -577,10 +600,7 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 			if !ok1 || !ok2 {
 				panic(ast.RuntimeError{Msg: "Less-than expects integers"})
 			}
-			if i1.Val < i2.Val {
-				return ast.IntNode{Val: 1}
-			}
-			return ast.IntNode{Val: 0}
+			return ast.BoolNode{Val: i1.Val < i2.Val}
 		case ast.GtNode:
 			v1 := Whnf(env, node.Left)
 			v2 := Whnf(env, node.Right)
@@ -589,10 +609,7 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 			if !ok1 || !ok2 {
 				panic(ast.RuntimeError{Msg: "Greater-than expects integers"})
 			}
-			if i1.Val > i2.Val {
-				return ast.IntNode{Val: 1}
-			}
-			return ast.IntNode{Val: 0}
+			return ast.BoolNode{Val: i1.Val > i2.Val}
 		case ast.LeNode:
 			v1 := Whnf(env, node.Left)
 			v2 := Whnf(env, node.Right)
@@ -601,10 +618,7 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 			if !ok1 || !ok2 {
 				panic(ast.RuntimeError{Msg: "Less-than-or-equal expects integers"})
 			}
-			if i1.Val <= i2.Val {
-				return ast.IntNode{Val: 1}
-			}
-			return ast.IntNode{Val: 0}
+			return ast.BoolNode{Val: i1.Val <= i2.Val}
 		case ast.GeNode:
 			v1 := Whnf(env, node.Left)
 			v2 := Whnf(env, node.Right)
@@ -613,10 +627,7 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 			if !ok1 || !ok2 {
 				panic(ast.RuntimeError{Msg: "Greater-than-or-equal expects integers"})
 			}
-			if i1.Val >= i2.Val {
-				return ast.IntNode{Val: 1}
-			}
-			return ast.IntNode{Val: 0}
+			return ast.BoolNode{Val: i1.Val >= i2.Val}
 		case ast.DiffNode:
 			xs := Whnf(env, node.Left)
 			ys := Whnf(env, node.Right)
@@ -790,6 +801,11 @@ func PrintNode(env *ast.Env, n ast.Node) string {
 	switch node := n.(type) {
 	case ast.IntNode:
 		return strconv.Itoa(node.Val)
+	case ast.BoolNode:
+		if node.Val {
+			return "True"
+		}
+		return "False"
 	case ast.CharNode:
 		return "'" + escapeChar(node.Val) + "'"
 	case ast.NilNode:

@@ -48,7 +48,7 @@ y = 100
 		t.Fatalf("Failed to write test script file: %v", err)
 	}
 
-	env := &ast.Env{}
+	env := ast.NewEnv()
 	loadedEnv, err := LoadScriptFile(scriptPath, env)
 	if err != nil {
 		t.Fatalf("LoadScriptFile failed: %v", err)
