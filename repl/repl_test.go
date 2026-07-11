@@ -1,6 +1,7 @@
 package repl
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -75,5 +76,47 @@ y = 100
 	intY, ok := yEval.(ast.IntNode)
 	if !ok || intY.Val != 100 {
 		t.Errorf("Expected y to evaluate to 100, got %v", yEval)
+	}
+}
+
+func TestHistoryFile(t *testing.T) {
+	// Backup history.m if it exists
+	var backedUp bool
+	if _, err := os.Stat("history.m"); err == nil {
+		_ = os.Rename("history.m", "history.m.bak")
+		backedUp = true
+	}
+	defer func() {
+		_ = os.Remove("history.m")
+		if backedUp {
+			_ = os.Rename("history.m.bak", "history.m")
+		}
+	}()
+
+	// 1. Generate 250 dummy history commands
+	var testHistory []string
+	for i := 0; i < 250; i++ {
+		testHistory = append(testHistory, fmt.Sprintf("cmd_%d", i))
+	}
+
+	// 2. Save history
+	saveHistory(testHistory)
+
+	// 3. Load history back
+	loaded := loadHistory()
+
+	// 4. Assertions
+	if len(loaded) != 200 {
+		t.Errorf("Expected loaded history to be capped at 200 elements, got %d", len(loaded))
+	}
+
+	// Should contain the last 200 elements: cmd_50 to cmd_249
+	if len(loaded) > 0 {
+		if loaded[0] != "cmd_50" {
+			t.Errorf("Expected first element of loaded history to be cmd_50, got %s", loaded[0])
+		}
+		if loaded[len(loaded)-1] != "cmd_249" {
+			t.Errorf("Expected last element of loaded history to be cmd_249, got %s", loaded[len(loaded)-1])
+		}
 	}
 }

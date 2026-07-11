@@ -317,6 +317,36 @@ func FormatTypeError(filename string, fileContent string, te *typecheck.TypeErro
 		indentPrefix, caretSpace.String())
 }
 
+func loadHistory() []string {
+	bytes, err := os.ReadFile("history.m")
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(string(bytes), "\n")
+	var history []string
+	for _, line := range lines {
+		line = strings.TrimSuffix(line, "\r")
+		if line != "" {
+			history = append(history, line)
+		}
+	}
+	if len(history) > 200 {
+		history = history[len(history)-200:]
+	}
+	return history
+}
+
+func saveHistory(history []string) {
+	if len(history) > 200 {
+		history = history[len(history)-200:]
+	}
+	content := strings.Join(history, "\n")
+	if len(history) > 0 {
+		content += "\n"
+	}
+	_ = os.WriteFile("history.m", []byte(content), 0644)
+}
+
 func LoadScriptFile(filename string, env *ast.Env, typeEnv *typecheck.TypeEnv) (*ast.Env, *typecheck.TypeEnv, error) {
 	bytes, err := os.ReadFile(filename)
 	if err != nil {
@@ -463,6 +493,9 @@ func LoadScriptFile(filename string, env *ast.Env, typeEnv *typecheck.TypeEnv) (
 func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) {
 	interactive := IsTTY()
 	var history []string
+	if interactive {
+		history = loadHistory()
+	}
 	var scanner *bufio.Scanner
 	if !interactive {
 		scanner = bufio.NewScanner(os.Stdin)
@@ -473,6 +506,9 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 		var ok bool
 		if interactive {
 			firstLine, history, ok = readLine("miranda> ", history, env)
+			if ok {
+				saveHistory(history)
+			}
 			if !ok {
 				fmt.Println("Goodbye.")
 				break
@@ -535,6 +571,9 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 				continuationPrompt := strings.Repeat(" ", len(promptStr)-2) + "> "
 				if interactive {
 					nextLine, history, nextOk = readLine(continuationPrompt, history, env)
+					if nextOk {
+						saveHistory(history)
+					}
 					if !nextOk {
 						break
 					}
