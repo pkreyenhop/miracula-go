@@ -40,16 +40,18 @@ func main() {
 
 	env := &ast.Env{}
 	var err error
-	env, err = repl.LoadScriptFile("stdenv.m", env)
+	stdenvEnv, err := repl.LoadScriptFile("stdenv.m", env)
 	if err != nil {
 		fmt.Printf("Error loading stdenv.m: %v\n", err)
 		os.Exit(1)
 	}
+	env = stdenvEnv
 
-	env, err = repl.LoadScriptFile(scriptFile, env)
+	scriptEnv, err := repl.LoadScriptFile(scriptFile, env)
 	if err != nil {
 		fmt.Printf("Error loading %s: %v\n", scriptFile, err)
-		os.Exit(1)
+	} else {
+		env = scriptEnv
 	}
 
 	if isReplMode {
