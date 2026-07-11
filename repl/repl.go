@@ -111,6 +111,7 @@ func readLine(prompt string, history []string, env *ast.Env) (string, []string, 
 					start--
 				}
 				prefix := string(buf[start:cursor])
+				insertedTab := false
 				if len(prefix) > 0 {
 					var all []string
 					all = append(all, []string{"where", "if", "then", "else", "otherwise", "mod"}...)
@@ -135,7 +136,16 @@ func readLine(prompt string, history []string, env *ast.Env) (string, []string, 
 						cand := candidates[0]
 						buf = append(buf[:start], append([]rune(cand), buf[cursor:]...)...)
 						cursor = start + len(cand)
+					} else {
+						insertedTab = true
 					}
+				} else {
+					insertedTab = true
+				}
+
+				if insertedTab {
+					buf = append(buf[:cursor], append([]rune{'\t'}, buf[cursor:]...)...)
+					cursor++
 				}
 			}
 		case 13, 10: // Enter
@@ -214,7 +224,16 @@ func readLine(prompt string, history []string, env *ast.Env) (string, []string, 
 			}
 		}
 
-		fmt.Printf("\r%s%s\x1b[K\r\x1b[%dG", prompt, string(buf), len(prompt)+cursor+1)
+		visualCursor := len(prompt)
+		for i := 0; i < cursor && i < len(buf); i++ {
+			if buf[i] == '\t' {
+				visualCursor += 8 - (visualCursor % 8)
+			} else {
+				visualCursor++
+			}
+		}
+
+		fmt.Printf("\r%s%s\x1b[K\r\x1b[%dG", prompt, string(buf), visualCursor+1)
 	}
 }
 
