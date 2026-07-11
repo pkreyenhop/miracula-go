@@ -60,6 +60,16 @@ func NewParser(tokens []lexer.Token) *Parser {
 	return &Parser{tokens: tokens, pos: 0}
 }
 
+func (p *Parser) mark(node ast.Node, tok lexer.Token) ast.Node {
+	if node != nil {
+		key := ast.GetNodeKey(node)
+		if key != nil {
+			ast.NodePositions.Store(key, ast.Position{Line: tok.Line, Col: tok.Col})
+		}
+	}
+	return node
+}
+
 func (p *Parser) peek() lexer.Token {
 	if p.pos >= len(p.tokens) {
 		return lexer.Token{Type: lexer.TOK_EOF}
@@ -315,138 +325,147 @@ func (p *Parser) parseExpr() ast.Node {
 	default:
 		e = p.parseOr()
 	}
-	return e
+	return p.mark(e, tok)
 }
 
 func (p *Parser) parseOr() ast.Node {
+	tok := p.peek()
 	left := p.parseAnd()
 	if p.peek().Type == lexer.TOK_OR {
 		p.consume()
-		return ast.IfNode{Cond: left, Then: ast.BoolNode{Val: true}, Else: p.parseOr()}
+		return p.mark(ast.IfNode{Cond: left, Then: ast.BoolNode{Val: true}, Else: p.parseOr()}, tok)
 	}
-	return left
+	return p.mark(left, tok)
 }
 
 func (p *Parser) parseAnd() ast.Node {
+	tok := p.peek()
 	left := p.parseCons()
 	if p.peek().Type == lexer.TOK_AND {
 		p.consume()
-		return ast.IfNode{Cond: left, Then: p.parseAnd(), Else: ast.BoolNode{Val: false}}
+		return p.mark(ast.IfNode{Cond: left, Then: p.parseAnd(), Else: ast.BoolNode{Val: false}}, tok)
 	}
-	return left
+	return p.mark(left, tok)
 }
 
 func (p *Parser) parseCons() ast.Node {
+	tok := p.peek()
 	left := p.parsePP()
 	if p.peek().Type == lexer.TOK_COLON {
 		p.consume()
-		return ast.ConsNode{Head: left, Tail: p.parseCons()}
+		return p.mark(ast.ConsNode{Head: left, Tail: p.parseCons()}, tok)
 	}
-	return left
+	return p.mark(left, tok)
 }
 
 func (p *Parser) parsePP() ast.Node {
-	left := p.parseComp()
 	tok := p.peek()
-	if tok.Type == lexer.TOK_PP {
+	left := p.parseComp()
+	nextTok := p.peek()
+	if nextTok.Type == lexer.TOK_PP {
 		p.consume()
-		return ast.AppendNode{Left: left, Right: p.parsePP()}
-	} else if tok.Type == lexer.TOK_DIFF {
+		return p.mark(ast.AppendNode{Left: left, Right: p.parsePP()}, tok)
+	} else if nextTok.Type == lexer.TOK_DIFF {
 		p.consume()
-		return ast.DiffNode{Left: left, Right: p.parsePP()}
+		return p.mark(ast.DiffNode{Left: left, Right: p.parsePP()}, tok)
 	}
-	return left
+	return p.mark(left, tok)
 }
 
 func (p *Parser) parseComp() ast.Node {
-	left := p.parseAddSub()
 	tok := p.peek()
-	switch tok.Type {
+	left := p.parseAddSub()
+	nextTok := p.peek()
+	switch nextTok.Type {
 	case lexer.TOK_EQ:
 		p.consume()
-		return ast.EqNode{Left: left, Right: p.parseAddSub()}
+		return p.mark(ast.EqNode{Left: left, Right: p.parseAddSub()}, tok)
 	case lexer.TOK_NE:
 		p.consume()
-		return ast.NeNode{Left: left, Right: p.parseAddSub()}
+		return p.mark(ast.NeNode{Left: left, Right: p.parseAddSub()}, tok)
 	case lexer.TOK_LT:
 		p.consume()
-		return ast.LtNode{Left: left, Right: p.parseAddSub()}
+		return p.mark(ast.LtNode{Left: left, Right: p.parseAddSub()}, tok)
 	case lexer.TOK_GT:
 		p.consume()
-		return ast.GtNode{Left: left, Right: p.parseAddSub()}
+		return p.mark(ast.GtNode{Left: left, Right: p.parseAddSub()}, tok)
 	case lexer.TOK_LE:
 		p.consume()
-		return ast.LeNode{Left: left, Right: p.parseAddSub()}
+		return p.mark(ast.LeNode{Left: left, Right: p.parseAddSub()}, tok)
 	case lexer.TOK_GE:
 		p.consume()
-		return ast.GeNode{Left: left, Right: p.parseAddSub()}
+		return p.mark(ast.GeNode{Left: left, Right: p.parseAddSub()}, tok)
 	}
-	return left
+	return p.mark(left, tok)
 }
 
 func (p *Parser) parseAddSub() ast.Node {
+	tok := p.peek()
 	left := p.parseMod()
 	for {
-		tok := p.peek()
-		if tok.Type == lexer.TOK_ADD {
+		nextTok := p.peek()
+		if nextTok.Type == lexer.TOK_ADD {
 			p.consume()
-			left = ast.AddNode{Left: left, Right: p.parseMod()}
-		} else if tok.Type == lexer.TOK_SUB {
+			left = p.mark(ast.AddNode{Left: left, Right: p.parseMod()}, tok)
+		} else if nextTok.Type == lexer.TOK_SUB {
 			p.consume()
-			left = ast.SubNode{Left: left, Right: p.parseMod()}
+			left = p.mark(ast.SubNode{Left: left, Right: p.parseMod()}, tok)
 		} else {
 			break
 		}
 	}
-	return left
+	return p.mark(left, tok)
 }
 
 func (p *Parser) parseMod() ast.Node {
+	tok := p.peek()
 	left := p.parseCompose()
 	for {
-		tok := p.peek()
-		if tok.Type == lexer.TOK_MOD {
+		nextTok := p.peek()
+		if nextTok.Type == lexer.TOK_MOD {
 			p.consume()
-			left = ast.ModNode{Left: left, Right: p.parseCompose()}
-		} else if tok.Type == lexer.TOK_MUL {
+			left = p.mark(ast.ModNode{Left: left, Right: p.parseCompose()}, tok)
+		} else if nextTok.Type == lexer.TOK_MUL {
 			p.consume()
-			left = ast.MulNode{Left: left, Right: p.parseCompose()}
-		} else if tok.Type == lexer.TOK_DIV {
+			left = p.mark(ast.MulNode{Left: left, Right: p.parseCompose()}, tok)
+		} else if nextTok.Type == lexer.TOK_DIV {
 			p.consume()
-			left = ast.DivNode{Left: left, Right: p.parseCompose()}
+			left = p.mark(ast.DivNode{Left: left, Right: p.parseCompose()}, tok)
 		} else {
 			break
 		}
 	}
-	return left
+	return p.mark(left, tok)
 }
 
 func (p *Parser) parseCompose() ast.Node {
+	tok := p.peek()
 	left := p.parseApp()
 	if p.peek().Type == lexer.TOK_DOT {
 		p.consume()
 		right := p.parseCompose()
 		varName := newVarName("cx")
-		return ast.LamNode{
+		return p.mark(ast.LamNode{
 			Var:  varName,
-			Body: ast.AppNode{Left: left, Right: ast.AppNode{Left: right, Right: ast.VarNode{Name: varName}}},
-		}
+			Body: p.mark(ast.AppNode{Left: left, Right: p.mark(ast.AppNode{Left: right, Right: p.mark(ast.VarNode{Name: varName}, tok)}, tok)}, tok),
+		}, tok)
 	}
-	return left
+	return p.mark(left, tok)
 }
 
 func (p *Parser) parseApp() ast.Node {
+	tok := p.peek()
 	left := p.parseAtom()
 	for {
-		tok := p.peek()
-		if tok.Type == lexer.TOK_INT || tok.Type == lexer.TOK_CHAR || tok.Type == lexer.TOK_STRING ||
-			tok.Type == lexer.TOK_VAR || tok.Type == lexer.TOK_LPAREN || tok.Type == lexer.TOK_LBRACK {
-			left = ast.AppNode{Left: left, Right: p.parseAtom()}
+		tokApp := p.peek()
+		if tokApp.Type == lexer.TOK_INT || tokApp.Type == lexer.TOK_CHAR || tokApp.Type == lexer.TOK_STRING ||
+			tokApp.Type == lexer.TOK_VAR || tokApp.Type == lexer.TOK_LPAREN || tokApp.Type == lexer.TOK_LBRACK {
+			left = p.mark(ast.AppNode{Left: left, Right: p.parseAtom()}, tokApp)
 		} else {
 			break
 		}
 	}
-	return left
+	return p.mark(left, tok)
 }
 
 func makeStringNode(s string) ast.Node {
@@ -466,35 +485,36 @@ func makeStringNode(s string) ast.Node {
 
 func (p *Parser) parseAtom() ast.Node {
 	tok := p.peek()
+	var res ast.Node
 	switch tok.Type {
 	case lexer.TOK_HASH:
 		p.consume()
-		return ast.AppNode{Left: ast.VarNode{Name: "length"}, Right: p.parseAtom()}
+		res = p.mark(ast.AppNode{Left: ast.VarNode{Name: "length"}, Right: p.parseAtom()}, tok)
 	case lexer.TOK_INT:
 		p.consume()
-		return ast.IntNode{Val: tok.Int}
+		res = ast.IntNode{Val: tok.Int}
 	case lexer.TOK_CHAR:
 		p.consume()
-		return ast.CharNode{Val: tok.Char}
+		res = ast.CharNode{Val: tok.Char}
 	case lexer.TOK_STRING:
 		p.consume()
-		return makeStringNode(tok.Str)
+		res = makeStringNode(tok.Str)
 	case lexer.TOK_VAR:
 		p.consume()
-		return ast.VarNode{Name: tok.Str}
+		res = ast.VarNode{Name: tok.Str}
 	case lexer.TOK_SUB:
 		p.consume()
-		return ast.SubNode{Left: ast.IntNode{Val: 0}, Right: p.parseAtom()}
+		res = ast.SubNode{Left: ast.IntNode{Val: 0}, Right: p.parseAtom()}
 	case lexer.TOK_LBRACK:
 		p.consume()
-		return p.parseListElements()
+		res = p.parseListElements()
 	case lexer.TOK_LPAREN:
 		if p.peek2().Type == lexer.TOK_COLON {
 			if p.peek3().Type == lexer.TOK_RPAREN {
 				p.consume() // '('
 				p.consume() // ':'
 				p.consume() // ')'
-				return ast.LamNode{
+				res = ast.LamNode{
 					Var: "x",
 					Body: ast.LamNode{
 						Var:  "y",
@@ -509,7 +529,7 @@ func (p *Parser) parseAtom() ast.Node {
 					p.errorf("expected ')'")
 				}
 				p.consume()
-				return ast.LamNode{
+				res = ast.LamNode{
 					Var:  "x",
 					Body: ast.ConsNode{Head: ast.VarNode{Name: "x"}, Tail: e},
 				}
@@ -519,7 +539,7 @@ func (p *Parser) parseAtom() ast.Node {
 				p.consume()
 				p.consume()
 				p.consume()
-				return ast.LamNode{
+				res = ast.LamNode{
 					Var: "x",
 					Body: ast.LamNode{
 						Var:  "y",
@@ -534,7 +554,7 @@ func (p *Parser) parseAtom() ast.Node {
 					p.errorf("expected ')'")
 				}
 				p.consume()
-				return ast.LamNode{
+				res = ast.LamNode{
 					Var:  "x",
 					Body: ast.AddNode{Left: ast.VarNode{Name: "x"}, Right: e},
 				}
@@ -544,7 +564,7 @@ func (p *Parser) parseAtom() ast.Node {
 				p.consume()
 				p.consume()
 				p.consume()
-				return ast.LamNode{
+				res = ast.LamNode{
 					Var: "x",
 					Body: ast.LamNode{
 						Var:  "y",
@@ -559,7 +579,7 @@ func (p *Parser) parseAtom() ast.Node {
 					p.errorf("expected ')'")
 				}
 				p.consume()
-				return ast.SubNode{Left: ast.IntNode{Val: 0}, Right: e}
+				res = ast.SubNode{Left: ast.IntNode{Val: 0}, Right: e}
 			}
 		} else {
 			p.consume() // '('
@@ -579,19 +599,20 @@ func (p *Parser) parseAtom() ast.Node {
 						p.errorf("expected ',' or ')' inside tuple")
 					}
 				}
-				return ast.TupleNode{Elems: elms}
+				res = ast.TupleNode{Elems: elms}
 			} else {
 				if p.peek().Type != lexer.TOK_RPAREN {
 					p.errorf("expected ')'")
 				}
 				p.consume()
-				return first
+				res = first
 			}
 		}
 	default:
 		p.errorf("unexpected token %s inside atom expression", tok.String())
 		return nil
 	}
+	return p.mark(res, tok)
 }
 
 func (p *Parser) parseListElements() ast.Node {

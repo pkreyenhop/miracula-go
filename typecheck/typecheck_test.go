@@ -29,10 +29,17 @@ func TestTypeCheckerSimple(t *testing.T) {
 		t.Errorf("Expected Bool, got %v", ty2)
 	}
 
-	// Test 3: 10 == True : Type Error
+	// Test 3: 10 == True : Type Error wrapped in TypeError
 	node3 := ast.EqNode{Left: ast.IntNode{Val: 10}, Right: ast.BoolNode{Val: true}}
 	_, _, err = tc.Infer(env, node3, nil)
 	if err == nil {
 		t.Errorf("Expected type error for 10 == True, but type checking passed")
+	} else {
+		te, ok := err.(*TypeError)
+		if !ok {
+			t.Errorf("Expected error to be *TypeError, got %T (%v)", err, err)
+		} else if te.Node != node3 {
+			t.Errorf("Expected TypeError Node to be the offending EqNode, got %T (%v)", te.Node, te.Node)
+		}
 	}
 }

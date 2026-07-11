@@ -362,7 +362,26 @@ func (tc *TypeChecker) Instantiate(s Scheme) Type {
 	return sub.Apply(s.Ty)
 }
 
+type TypeError struct {
+	Node ast.Node
+	Err  error
+}
+
+func (e *TypeError) Unwrap() error { return e.Err }
+func (e *TypeError) Error() string { return e.Err.Error() }
+
 func (tc *TypeChecker) Infer(env *TypeEnv, node ast.Node, sub Substitution) (Type, Substitution, error) {
+	t, s, err := tc.inferInternal(env, node, sub)
+	if err != nil {
+		if _, ok := err.(*TypeError); ok {
+			return nil, nil, err
+		}
+		return nil, nil, &TypeError{Node: node, Err: err}
+	}
+	return t, s, nil
+}
+
+func (tc *TypeChecker) inferInternal(env *TypeEnv, node ast.Node, sub Substitution) (Type, Substitution, error) {
 	switch n := node.(type) {
 	case ast.IntNode:
 		return TInt, sub, nil

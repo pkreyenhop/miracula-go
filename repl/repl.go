@@ -2,6 +2,7 @@ package repl
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -274,6 +275,48 @@ func FormatParseError(filename string, fileContent string, pe parser.ParseError)
 		indentPrefix, caretSpace.String())
 }
 
+func FormatTypeError(filename string, fileContent string, te *typecheck.TypeError) string {
+	posVal, found := ast.NodePositions.Load(ast.GetNodeKey(te.Node))
+	lineNum, colNum := 1, 1
+	if found {
+		if pos, ok := posVal.(ast.Position); ok {
+			lineNum = pos.Line
+			colNum = pos.Col
+		}
+	}
+
+	lines := strings.Split(fileContent, "\n")
+	if lineNum < 1 {
+		lineNum = 1
+	}
+	if lineNum > len(lines) {
+		lineNum = len(lines)
+	}
+
+	var lineStr string
+	if len(lines) > 0 && lineNum-1 < len(lines) {
+		lineStr = strings.TrimSuffix(lines[lineNum-1], "\r")
+	}
+
+	linePrefix := fmt.Sprintf("  %d | ", lineNum)
+	indentPrefix := strings.Repeat(" ", len(fmt.Sprintf("  %d ", lineNum))) + "| "
+
+	var caretSpace strings.Builder
+	runes := []rune(lineStr)
+	for i := 0; i < colNum-1 && i < len(runes); i++ {
+		if runes[i] == '\t' {
+			caretSpace.WriteString("\t")
+		} else {
+			caretSpace.WriteString(" ")
+		}
+	}
+
+	return fmt.Sprintf("%s:%d:%d: Type Error: %s\n%s%s\n%s%s^",
+		filename, lineNum, colNum, te.Err.Error(),
+		linePrefix, lineStr,
+		indentPrefix, caretSpace.String())
+}
+
 func LoadScriptFile(filename string, env *ast.Env, typeEnv *typecheck.TypeEnv) (*ast.Env, *typecheck.TypeEnv, error) {
 	bytes, err := os.ReadFile(filename)
 	if err != nil {
@@ -392,10 +435,18 @@ func LoadScriptFile(filename string, env *ast.Env, typeEnv *typecheck.TypeEnv) (
 		tcEnv := accTypeEnv.Extend(name, typecheck.Scheme{Vars: nil, Ty: selfTy})
 		tB, sNext, err := tc.Infer(tcEnv, desugaredLambda, sCurr)
 		if err != nil {
+			var te *typecheck.TypeError
+			if errors.As(err, &te) {
+				return nil, nil, fmt.Errorf("%s", FormatTypeError(filename, string(bytes), te))
+			}
 			return nil, nil, fmt.Errorf("Type Error in '%s': %w", name, err)
 		}
 		sNext2, err := sNext.Unify(selfTy, tB)
 		if err != nil {
+			var te *typecheck.TypeError
+			if errors.As(err, &te) {
+				return nil, nil, fmt.Errorf("%s", FormatTypeError(filename, string(bytes), te))
+			}
 			return nil, nil, fmt.Errorf("Type Error in '%s': %w", name, err)
 		}
 		sCurr = sNext2
@@ -539,7 +590,10 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					if rtErr, ok := r.(ast.RuntimeError); ok {
+					var te *typecheck.TypeError
+					if errVal, ok := r.(error); ok && errors.As(errVal, &te) {
+						fmt.Println(FormatTypeError("<stdin>", fullInput, te))
+					} else if rtErr, ok := r.(ast.RuntimeError); ok {
 						if strings.HasPrefix(rtErr.Msg, "Type Error:") {
 							fmt.Println(rtErr.Msg)
 						} else {
@@ -602,11 +656,11 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 					tcEnv := accTypeEnv.Extend(name, typecheck.Scheme{Vars: nil, Ty: selfTy})
 					tB, sNext, err := tc.Infer(tcEnv, finalLambda, sCurr)
 					if err != nil {
-						panic(ast.RuntimeError{Msg: fmt.Sprintf("Type Error: %s", err)})
+						panic(err)
 					}
 					sNext2, err := sNext.Unify(selfTy, tB)
 					if err != nil {
-						panic(ast.RuntimeError{Msg: fmt.Sprintf("Type Error: %s", err)})
+						panic(err)
 					}
 					sCurr = sNext2
 
@@ -625,7 +679,7 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 				tc := typecheck.NewTypeChecker()
 				_, _, err := tc.Infer(typeEnv, evalStmt.Expr, nil)
 				if err != nil {
-					panic(ast.RuntimeError{Msg: fmt.Sprintf("Type Error: %s", err)})
+					panic(err)
 				}
 
 				startTime := time.Now()

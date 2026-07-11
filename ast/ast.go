@@ -1,5 +1,10 @@
 package ast
 
+import (
+	"sync"
+	"unsafe"
+)
+
 
 // ==========================================================================
 // 1. AST & VALUE NODES DEFINITION
@@ -226,3 +231,19 @@ type BlackholeError struct {
 }
 
 func (e BlackholeError) Error() string { return e.Msg }
+
+type Position struct {
+	Line int
+	Col  int
+}
+
+type interfaceHeader struct {
+	Type unsafe.Pointer
+	Data unsafe.Pointer
+}
+
+func GetNodeKey(node Node) unsafe.Pointer {
+	return (*interfaceHeader)(unsafe.Pointer(&node)).Data
+}
+
+var NodePositions sync.Map // map[unsafe.Pointer]Position
