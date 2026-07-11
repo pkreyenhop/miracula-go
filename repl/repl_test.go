@@ -204,3 +204,52 @@ func TestEditorFilenameValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestErrorTracking(t *testing.T) {
+	// Create a temporary script file
+	tmpDir, err := os.MkdirTemp("", "miracula-repl-err-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Test 1: Type error tracking
+	scriptPath := filepath.Join(tmpDir, "type_err.m")
+	content := []byte("x = 5 == \"hello\"\n")
+	if err := os.WriteFile(scriptPath, content, 0644); err != nil {
+		t.Fatalf("Failed to write type_err.m: %v", err)
+	}
+
+	env := ast.NewEnv()
+	typeEnv := typecheck.DefaultTypeEnv()
+	_, _, err = LoadScriptFile(scriptPath, env, typeEnv)
+	if err == nil {
+		t.Fatalf("Expected type error but LoadScriptFile succeeded")
+	}
+
+	if lastErrorLine != 1 {
+		t.Errorf("Expected lastErrorLine to be 1 for type error, got %d", lastErrorLine)
+	}
+	if lastErrorCol != 5 {
+		t.Errorf("Expected lastErrorCol to be 5 for type error (at ==), got %d", lastErrorCol)
+	}
+
+	// Test 2: Parse error tracking
+	scriptPath2 := filepath.Join(tmpDir, "parse_err.m")
+	content2 := []byte("x = +\n")
+	if err := os.WriteFile(scriptPath2, content2, 0644); err != nil {
+		t.Fatalf("Failed to write parse_err.m: %v", err)
+	}
+
+	_, _, err = LoadScriptFile(scriptPath2, env, typeEnv)
+	if err == nil {
+		t.Fatalf("Expected parse error but LoadScriptFile succeeded")
+	}
+
+	if lastErrorLine != 1 {
+		t.Errorf("Expected lastErrorLine to be 1 for parse error, got %d", lastErrorLine)
+	}
+	if lastErrorCol != 5 {
+		t.Errorf("Expected lastErrorCol to be 5 for parse error (at +), got %d", lastErrorCol)
+	}
+}

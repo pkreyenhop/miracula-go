@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -16,6 +17,11 @@ import (
 	"pkreyenhop.com/miracula-go/parser"
 	"pkreyenhop.com/miracula-go/eval"
 	"pkreyenhop.com/miracula-go/typecheck"
+)
+
+var (
+	lastErrorLine int
+	lastErrorCol  int
 )
 
 func IsTTY() bool {
@@ -348,6 +354,8 @@ func saveHistory(history []string) {
 }
 
 func LoadScriptFile(filename string, env *ast.Env, typeEnv *typecheck.TypeEnv) (*ast.Env, *typecheck.TypeEnv, error) {
+	lastErrorLine = 0
+	lastErrorCol = 0
 	bytes, err := os.ReadFile(filename)
 	if err != nil {
 		if filename == "stdenv.m" {
@@ -419,6 +427,8 @@ func LoadScriptFile(filename string, env *ast.Env, typeEnv *typecheck.TypeEnv) (
 			defer func() {
 				if r := recover(); r != nil {
 					if pe, ok := r.(parser.ParseError); ok {
+						lastErrorLine = pe.Tok.Line
+						lastErrorCol = pe.Tok.Col
 						err = fmt.Errorf("%s", FormatParseError(filename, string(bytes), pe))
 					} else {
 						var tokStrs []string
@@ -467,6 +477,13 @@ func LoadScriptFile(filename string, env *ast.Env, typeEnv *typecheck.TypeEnv) (
 		if err != nil {
 			var te *typecheck.TypeError
 			if errors.As(err, &te) {
+				posVal, found := ast.NodePositions.Load(ast.GetNodeKey(te.Node))
+				if found {
+					if pos, ok := posVal.(ast.Position); ok {
+						lastErrorLine = pos.Line
+						lastErrorCol = pos.Col
+					}
+				}
 				return nil, nil, fmt.Errorf("%s", FormatTypeError(filename, string(bytes), te))
 			}
 			return nil, nil, fmt.Errorf("Type Error in '%s': %w", name, err)
@@ -475,6 +492,13 @@ func LoadScriptFile(filename string, env *ast.Env, typeEnv *typecheck.TypeEnv) (
 		if err != nil {
 			var te *typecheck.TypeError
 			if errors.As(err, &te) {
+				posVal, found := ast.NodePositions.Load(ast.GetNodeKey(te.Node))
+				if found {
+					if pos, ok := posVal.(ast.Position); ok {
+						lastErrorLine = pos.Line
+						lastErrorCol = pos.Col
+					}
+				}
 				return nil, nil, fmt.Errorf("%s", FormatTypeError(filename, string(bytes), te))
 			}
 			return nil, nil, fmt.Errorf("Type Error in '%s': %w", name, err)
@@ -551,8 +575,21 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 			if _, err := os.Stat(editor); err != nil {
 				editor = "vi"
 			}
-			fmt.Printf("Opening %s %s ...\n", editor, targetFile)
-			cmd := exec.Command(editor, targetFile)
+			var cmd *exec.Cmd
+			if lastErrorLine > 0 {
+				fmt.Printf("Opening %s %s at line %d, col %d ...\n", editor, targetFile, lastErrorLine, lastErrorCol)
+				if editor == "./mica" {
+					cmd = exec.Command(editor, targetFile, strconv.Itoa(lastErrorLine), strconv.Itoa(lastErrorCol))
+				} else {
+					cmd = exec.Command(editor, fmt.Sprintf("+call cursor(%d,%d)", lastErrorLine, lastErrorCol), targetFile)
+				}
+				// Reset error tracking after opening
+				lastErrorLine = 0
+				lastErrorCol = 0
+			} else {
+				fmt.Printf("Opening %s %s ...\n", editor, targetFile)
+				cmd = exec.Command(editor, targetFile)
+			}
 			cmd.Stdin = os.Stdin
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
