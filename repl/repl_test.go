@@ -120,3 +120,63 @@ func TestHistoryFile(t *testing.T) {
 		}
 	}
 }
+
+func TestSaveReplDefinitions(t *testing.T) {
+	// Create a temporary script file
+	tmpDir, err := os.MkdirTemp("", "miracula-repl-save-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	scriptPath := filepath.Join(tmpDir, "temp_script.m")
+	content := []byte("orig_val = 100\n")
+	if err := os.WriteFile(scriptPath, content, 0644); err != nil {
+		t.Fatalf("Failed to write temp script file: %v", err)
+	}
+
+	// 1. Load initial environment
+	env := ast.NewEnv()
+	typeEnv := typecheck.DefaultTypeEnv()
+	loadedEnv, _, err := LoadScriptFile(scriptPath, env, typeEnv)
+	if err != nil {
+		t.Fatalf("Failed to load initial script file: %v", err)
+	}
+
+	// Verify original value
+	valOrig, ok := loadedEnv.Lookup("orig_val")
+	if !ok {
+		t.Fatalf("Expected orig_val to be defined")
+	}
+	origEval := eval.Whnf(loadedEnv, valOrig)
+	intOrig, ok := origEval.(ast.IntNode)
+	if !ok || intOrig.Val != 100 {
+		t.Errorf("Expected orig_val to evaluate to 100, got %v", origEval)
+	}
+
+	// 2. Simulate REPL appending a definition to the script file
+	f, err := os.OpenFile(scriptPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("Failed to open script file for append: %v", err)
+	}
+	newDef := "repl_val = 999\n"
+	_, _ = f.WriteString(newDef)
+	_ = f.Close()
+
+	// 3. Reload environment from the script file (simulating REPL restart)
+	reloadedEnv, _, err := LoadScriptFile(scriptPath, ast.NewEnv(), typecheck.DefaultTypeEnv())
+	if err != nil {
+		t.Fatalf("Failed to reload script file: %v", err)
+	}
+
+	// Verify new binding exists and has the correct value
+	valNew, ok := reloadedEnv.Lookup("repl_val")
+	if !ok {
+		t.Fatalf("Expected repl_val to be defined after reload")
+	}
+	newEval := eval.Whnf(reloadedEnv, valNew)
+	intNew, ok := newEval.(ast.IntNode)
+	if !ok || intNew.Val != 999 {
+		t.Errorf("Expected repl_val to evaluate to 999, got %v", newEval)
+	}
+}

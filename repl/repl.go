@@ -714,6 +714,17 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 				}
 				env = accEnv
 				typeEnv = accTypeEnv
+
+				// Keep REPL definitions in scriptFile
+				f, err := os.OpenFile(scriptFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+				if err == nil {
+					toWrite := fullInput
+					if !strings.HasSuffix(toWrite, "\n") {
+						toWrite += "\n"
+					}
+					_, _ = f.WriteString(toWrite)
+					_ = f.Close()
+				}
 			} else {
 				tc := typecheck.NewTypeChecker()
 				_, _, err := tc.Infer(typeEnv, evalStmt.Expr, nil)
