@@ -544,6 +544,7 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 					continue
 				}
 				targetFile = target
+				scriptFile = targetFile
 			}
 
 			editor := "./mica"
@@ -564,7 +565,6 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 			} else {
 				env = reloadedEnv
 				typeEnv = reloadedTypeEnv
-				scriptFile = targetFile
 			}
 			continue
 		}
