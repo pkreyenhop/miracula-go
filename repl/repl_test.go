@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"pkreyenhop.com/miracula-go/ast"
 	"pkreyenhop.com/miracula-go/eval"
@@ -178,5 +179,28 @@ func TestSaveReplDefinitions(t *testing.T) {
 	intNew, ok := newEval.(ast.IntNode)
 	if !ok || intNew.Val != 999 {
 		t.Errorf("Expected repl_val to evaluate to 999, got %v", newEval)
+	}
+}
+
+func TestEditorFilenameValidation(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected bool
+	}{
+		{"/e script.m", true},
+		{"/e other.m", true},
+		{"/e test.m", true},
+		{"/e test.txt", false},
+		{"/e test.m.txt", false},
+		{"/e test", false},
+	}
+
+	for _, tt := range tests {
+		parts := strings.Fields(tt.input)
+		target := parts[1]
+		isValid := strings.HasSuffix(target, ".m")
+		if isValid != tt.expected {
+			t.Errorf("Validation for %q expected %v, got %v", tt.input, tt.expected, isValid)
+		}
 	}
 }

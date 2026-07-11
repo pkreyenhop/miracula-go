@@ -534,25 +534,37 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 			}
 			break
 		}
-		if lineTrimmed == "/e" {
+		if strings.HasPrefix(lineTrimmed, "/e") {
+			targetFile := scriptFile
+			parts := strings.Fields(lineTrimmed)
+			if len(parts) > 1 {
+				target := parts[1]
+				if !strings.HasSuffix(target, ".m") {
+					fmt.Println("Error: Filename must have a .m extension indicating a Miracula file.")
+					continue
+				}
+				targetFile = target
+			}
+
 			editor := "./mica"
 			if _, err := os.Stat(editor); err != nil {
 				editor = "vi"
 			}
-			fmt.Printf("Opening %s %s ...\n", editor, scriptFile)
-			cmd := exec.Command(editor, scriptFile)
+			fmt.Printf("Opening %s %s ...\n", editor, targetFile)
+			cmd := exec.Command(editor, targetFile)
 			cmd.Stdin = os.Stdin
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			_ = cmd.Run()
-			fmt.Printf("Reloading environment profiles from %s...\n", scriptFile)
+			fmt.Printf("Reloading environment profiles from %s...\n", targetFile)
 			envWithStd, typeEnvWithStd, _ := LoadScriptFile("stdenv.m", ast.NewEnv(), typecheck.DefaultTypeEnv())
-			reloadedEnv, reloadedTypeEnv, err := LoadScriptFile(scriptFile, envWithStd, typeEnvWithStd)
+			reloadedEnv, reloadedTypeEnv, err := LoadScriptFile(targetFile, envWithStd, typeEnvWithStd)
 			if err != nil {
 				fmt.Printf("Error reloading: %v\n", err)
 			} else {
 				env = reloadedEnv
 				typeEnv = reloadedTypeEnv
+				scriptFile = targetFile
 			}
 			continue
 		}
