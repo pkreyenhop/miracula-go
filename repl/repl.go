@@ -470,6 +470,17 @@ func RunREPLDirect(env *ast.Env, scriptFile string) {
 		inputLines := strings.Split(fullInput, "\n")
 		var layoutLines []lexer.LayoutLine
 		for lineIdx, lineText := range inputLines {
+			indent := 0
+			for _, r := range lineText {
+				if r == ' ' {
+					indent++
+				} else if r == '\t' {
+					indent += 4
+				} else {
+					break
+				}
+			}
+
 			lineToks := lexer.TokenizeWithPos(lineText, lineIdx+1)
 			var filtered []lexer.Token
 			for _, t := range lineToks {
@@ -479,7 +490,7 @@ func RunREPLDirect(env *ast.Env, scriptFile string) {
 			}
 			wrapped := lexer.WrapWhereOnLine(filtered)
 			if len(wrapped) > 0 {
-				layoutLines = append(layoutLines, lexer.LayoutLine{Indent: 0, Toks: wrapped})
+				layoutLines = append(layoutLines, lexer.LayoutLine{Indent: indent, Toks: wrapped})
 			}
 		}
 		tokens = lexer.ApplyLayout(layoutLines)
