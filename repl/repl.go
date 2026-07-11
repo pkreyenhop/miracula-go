@@ -408,8 +408,12 @@ func RunREPLDirect(env *ast.Env, scriptFile string) {
 			break
 		}
 		if lineTrimmed == "/e" {
-			fmt.Printf("Opening vi %s ...\n", scriptFile)
-			cmd := exec.Command("./mica", scriptFile)
+			editor := "./mica"
+			if _, err := os.Stat(editor); err != nil {
+				editor = "vi"
+			}
+			fmt.Printf("Opening %s %s ...\n", editor, scriptFile)
+			cmd := exec.Command(editor, scriptFile)
 			cmd.Stdin = os.Stdin
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
