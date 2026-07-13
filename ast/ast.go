@@ -44,14 +44,6 @@ type AppNode struct {
 }
 type MatchErrorNode struct{}
 
-type Aoc2PartialNode struct {
-	Input string
-}
-
-type Aoc11PartialNode struct {
-	Input string
-}
-
 
 type ThunkState int
 
@@ -137,8 +129,6 @@ func (LtNode) isNode()          {}
 func (GtNode) isNode()          {}
 func (LeNode) isNode()          {}
 func (GeNode) isNode()          {}
-func (Aoc2PartialNode) isNode()  {}
-func (Aoc11PartialNode) isNode() {}
 
 
 type Binding struct {

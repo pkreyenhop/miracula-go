@@ -848,13 +848,6 @@ func DefaultTypeEnv() *TypeEnv {
 	env.Map["length"] = Scheme{Vars: []int{0}, Ty: FunType{From: ListType{Elem: VarType{Id: 0}}, To: TInt}}
 	env.Map["reverse"] = Scheme{Vars: []int{0}, Ty: FunType{From: ListType{Elem: VarType{Id: 0}}, To: ListType{Elem: VarType{Id: 0}}}}
 
-	env.Map["aoc2_solver"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TChar}, To: FunType{From: TInt, To: TInt}}}
-	env.Map["aoc7_solver"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TChar}, To: TInt}}
-	env.Map["aoc8_solver"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TChar}, To: TInt}}
-	env.Map["aoc9_solver"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TChar}, To: TInt}}
-	env.Map["aoc10_solver"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TChar}, To: TInt}}
-	env.Map["aoc11_solver"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TChar}, To: FunType{From: TInt, To: TInt}}}
-
 	return env
 }
 
