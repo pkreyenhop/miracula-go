@@ -502,6 +502,92 @@ func evalBinop(env *ast.Env, op ast.Node, v1, v2 ast.Node) ast.Node {
 	panic(fmt.Sprintf("Internal error: unknown binary operator: %T", op))
 }
 
+// tryQuickEval returns the value of an expression that is available
+// without any evaluation work: a literal, or a local variable bound to a
+// value (directly or through an already-evaluated thunk). ok=false means
+// the expression needs the machine. Because it only reads, no evaluation
+// order or effect can be observed through it.
+func tryQuickEval(env *ast.Env, e ast.Node) (ast.Node, bool) {
+	switch t := e.(type) {
+	case ast.IntNode:
+		return t, true
+	case ast.BoolNode:
+		return t, true
+	case ast.CharNode:
+		return t, true
+	case ast.NilNode:
+		return t, true
+	case ast.LocalVarNode:
+		curr := env
+		for d := t.Depth; d > 0; d-- {
+			curr = curr.Parent
+			if curr == nil {
+				return nil, false
+			}
+		}
+		val := curr.Val
+		if th, ok := val.(ast.ThunkNode); ok {
+			cell := th.Cell
+			if cell.State != ast.Evaluated {
+				return nil, false
+			}
+			val = cell.Val
+		}
+		if _, bad := val.(ast.MatchErrorNode); bad {
+			// forcing a match error must panic through the machine
+			return nil, false
+		}
+		return val, true
+	}
+	return nil, false
+}
+
+// tryQuickEval2 additionally computes one level of binary operator over
+// quick operands inline — the shape of every arithmetic pattern-match
+// guard and recursive-call argument.
+func tryQuickEval2(env *ast.Env, e ast.Node) (ast.Node, bool) {
+	if v, ok := tryQuickEval(env, e); ok {
+		return v, true
+	}
+	switch t := e.(type) {
+	case ast.AddNode:
+		return tryQuickBinop(env, e, t.Left, t.Right)
+	case ast.SubNode:
+		return tryQuickBinop(env, e, t.Left, t.Right)
+	case ast.MulNode:
+		return tryQuickBinop(env, e, t.Left, t.Right)
+	case ast.DivNode:
+		return tryQuickBinop(env, e, t.Left, t.Right)
+	case ast.ModNode:
+		return tryQuickBinop(env, e, t.Left, t.Right)
+	case ast.EqNode:
+		return tryQuickBinop(env, e, t.Left, t.Right)
+	case ast.NeNode:
+		return tryQuickBinop(env, e, t.Left, t.Right)
+	case ast.LtNode:
+		return tryQuickBinop(env, e, t.Left, t.Right)
+	case ast.GtNode:
+		return tryQuickBinop(env, e, t.Left, t.Right)
+	case ast.LeNode:
+		return tryQuickBinop(env, e, t.Left, t.Right)
+	case ast.GeNode:
+		return tryQuickBinop(env, e, t.Left, t.Right)
+	}
+	return nil, false
+}
+
+func tryQuickBinop(env *ast.Env, op ast.Node, left, right ast.Node) (ast.Node, bool) {
+	lv, ok := tryQuickEval(env, left)
+	if !ok {
+		return nil, false
+	}
+	rv, ok := tryQuickEval(env, right)
+	if !ok {
+		return nil, false
+	}
+	return evalBinop(env, op, lv, rv), true
+}
+
 func whnfCore(env *ast.Env, n ast.Node, pending *[]*ast.ThunkCell) ast.Node {
 	// small inline buffer: shallow expressions (the overwhelmingly common
 	// case for nested Whnf calls) never allocate a control stack
@@ -734,15 +820,58 @@ machine:
 				continue
 			}
 		case ast.IfNode:
-			conts = append(conts, cont{kind: kIfCond, mark: len(*pending), node: node, env: env})
+			if cv, qok := tryQuickEval2(env, node.Cond); qok {
+				if b, isB := cv.(ast.BoolNode); isB {
+					if b.Val {
+						n = node.Then
+					} else {
+						n = node.Else
+					}
+					continue
+				}
+				if i, isI := cv.(ast.IntNode); isI {
+					if i.Val != 0 {
+						n = node.Then
+					} else {
+						n = node.Else
+					}
+					continue
+				}
+				panic(ast.RuntimeError{Msg: fmt.Sprintf("If condition must be a boolean, got: %s", PrintNode(env, cv))})
+			}
+			conts = append(conts, cont{kind: kIfCond, mark: len(*pending), node: n, env: env})
 			n = node.Cond
 			continue
 		case ast.IfZeroNode:
-			conts = append(conts, cont{kind: kIfZeroCond, mark: len(*pending), node: node, env: env})
+			if cv, qok := tryQuickEval2(env, node.Cond); qok {
+				i, isInt := cv.(ast.IntNode)
+				if !isInt {
+					panic(ast.RuntimeError{Msg: "Condition must resolve to an integer"})
+				}
+				if i.Val == 0 {
+					n = node.Then
+				} else {
+					n = node.Else
+				}
+				continue
+			}
+			conts = append(conts, cont{kind: kIfZeroCond, mark: len(*pending), node: n, env: env})
 			n = node.Cond
 			continue
 		case ast.IfNilNode:
-			conts = append(conts, cont{kind: kIfNilCond, mark: len(*pending), node: node, env: env})
+			if cv, qok := tryQuickEval(env, node.Cond); qok {
+				switch cv.(type) {
+				case ast.NilNode:
+					n = node.Then
+					continue
+				case ast.ConsNode:
+					n = node.Else
+					continue
+				default:
+					panic(ast.RuntimeError{Msg: "Condition must resolve to a list"})
+				}
+			}
+			conts = append(conts, cont{kind: kIfNilCond, mark: len(*pending), node: n, env: env})
 			n = node.Cond
 			continue
 		case ast.AppendNode:
@@ -775,53 +904,160 @@ machine:
 			}}
 			v = ast.ConsNode{Head: v1, Tail: tPrime}
 		case ast.ProjNode:
+			if tv, qok := tryQuickEval(env, node.Tuple); qok {
+				t, isT := tv.(ast.TupleNode)
+				if !isT {
+					panic(ast.RuntimeError{Msg: "Proj expects a tuple"})
+				}
+				n = t.Elems[node.Index]
+				continue
+			}
 			conts = append(conts, cont{kind: kProjTuple, mark: len(*pending), idx: node.Index, env: env})
 			n = node.Tuple
 			continue
 		case ast.MatchErrorNode:
 			panic(ast.RuntimeError{Msg: "Pattern matching exhausted"})
 		case ast.AddNode:
-			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			if lv, qok := tryQuickEval2(env, node.Left); qok {
+				if rv, qok2 := tryQuickEval2(env, node.Right); qok2 {
+					v = evalBinop(env, node, lv, rv)
+					break
+				}
+				conts = append(conts, cont{kind: kBinopRight, mark: len(*pending), node: n, val: lv, env: env})
+				n = node.Right
+				continue
+			}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: n, val: node.Right, env: env})
 			n = node.Left
 			continue
 		case ast.SubNode:
-			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			if lv, qok := tryQuickEval2(env, node.Left); qok {
+				if rv, qok2 := tryQuickEval2(env, node.Right); qok2 {
+					v = evalBinop(env, node, lv, rv)
+					break
+				}
+				conts = append(conts, cont{kind: kBinopRight, mark: len(*pending), node: n, val: lv, env: env})
+				n = node.Right
+				continue
+			}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: n, val: node.Right, env: env})
 			n = node.Left
 			continue
 		case ast.MulNode:
-			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			if lv, qok := tryQuickEval2(env, node.Left); qok {
+				if rv, qok2 := tryQuickEval2(env, node.Right); qok2 {
+					v = evalBinop(env, node, lv, rv)
+					break
+				}
+				conts = append(conts, cont{kind: kBinopRight, mark: len(*pending), node: n, val: lv, env: env})
+				n = node.Right
+				continue
+			}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: n, val: node.Right, env: env})
 			n = node.Left
 			continue
 		case ast.DivNode:
-			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			if lv, qok := tryQuickEval2(env, node.Left); qok {
+				if rv, qok2 := tryQuickEval2(env, node.Right); qok2 {
+					v = evalBinop(env, node, lv, rv)
+					break
+				}
+				conts = append(conts, cont{kind: kBinopRight, mark: len(*pending), node: n, val: lv, env: env})
+				n = node.Right
+				continue
+			}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: n, val: node.Right, env: env})
 			n = node.Left
 			continue
 		case ast.ModNode:
-			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			if lv, qok := tryQuickEval2(env, node.Left); qok {
+				if rv, qok2 := tryQuickEval2(env, node.Right); qok2 {
+					v = evalBinop(env, node, lv, rv)
+					break
+				}
+				conts = append(conts, cont{kind: kBinopRight, mark: len(*pending), node: n, val: lv, env: env})
+				n = node.Right
+				continue
+			}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: n, val: node.Right, env: env})
 			n = node.Left
 			continue
 		case ast.EqNode:
-			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			if lv, qok := tryQuickEval2(env, node.Left); qok {
+				if rv, qok2 := tryQuickEval2(env, node.Right); qok2 {
+					v = evalBinop(env, node, lv, rv)
+					break
+				}
+				conts = append(conts, cont{kind: kBinopRight, mark: len(*pending), node: n, val: lv, env: env})
+				n = node.Right
+				continue
+			}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: n, val: node.Right, env: env})
 			n = node.Left
 			continue
 		case ast.NeNode:
-			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			if lv, qok := tryQuickEval2(env, node.Left); qok {
+				if rv, qok2 := tryQuickEval2(env, node.Right); qok2 {
+					v = evalBinop(env, node, lv, rv)
+					break
+				}
+				conts = append(conts, cont{kind: kBinopRight, mark: len(*pending), node: n, val: lv, env: env})
+				n = node.Right
+				continue
+			}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: n, val: node.Right, env: env})
 			n = node.Left
 			continue
 		case ast.LtNode:
-			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			if lv, qok := tryQuickEval2(env, node.Left); qok {
+				if rv, qok2 := tryQuickEval2(env, node.Right); qok2 {
+					v = evalBinop(env, node, lv, rv)
+					break
+				}
+				conts = append(conts, cont{kind: kBinopRight, mark: len(*pending), node: n, val: lv, env: env})
+				n = node.Right
+				continue
+			}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: n, val: node.Right, env: env})
 			n = node.Left
 			continue
 		case ast.GtNode:
-			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			if lv, qok := tryQuickEval2(env, node.Left); qok {
+				if rv, qok2 := tryQuickEval2(env, node.Right); qok2 {
+					v = evalBinop(env, node, lv, rv)
+					break
+				}
+				conts = append(conts, cont{kind: kBinopRight, mark: len(*pending), node: n, val: lv, env: env})
+				n = node.Right
+				continue
+			}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: n, val: node.Right, env: env})
 			n = node.Left
 			continue
 		case ast.LeNode:
-			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			if lv, qok := tryQuickEval2(env, node.Left); qok {
+				if rv, qok2 := tryQuickEval2(env, node.Right); qok2 {
+					v = evalBinop(env, node, lv, rv)
+					break
+				}
+				conts = append(conts, cont{kind: kBinopRight, mark: len(*pending), node: n, val: lv, env: env})
+				n = node.Right
+				continue
+			}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: n, val: node.Right, env: env})
 			n = node.Left
 			continue
 		case ast.GeNode:
-			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			if lv, qok := tryQuickEval2(env, node.Left); qok {
+				if rv, qok2 := tryQuickEval2(env, node.Right); qok2 {
+					v = evalBinop(env, node, lv, rv)
+					break
+				}
+				conts = append(conts, cont{kind: kBinopRight, mark: len(*pending), node: n, val: lv, env: env})
+				n = node.Right
+				continue
+			}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: n, val: node.Right, env: env})
 			n = node.Left
 			continue
 		case ast.DiffNode:
