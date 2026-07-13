@@ -3,6 +3,7 @@ package eval
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -27,7 +28,7 @@ func IsInterrupted() bool {
 
 type InterruptedException struct{}
 
-func smlDiv(a, b int) int {
+func smlDiv(a, b int64) int64 {
 	q := a / b
 	r := a % b
 	if (r > 0 && b < 0) || (r < 0 && b > 0) {
@@ -36,7 +37,7 @@ func smlDiv(a, b int) int {
 	return q
 }
 
-func smlMod(a, b int) int {
+func smlMod(a, b int64) int64 {
 	r := a % b
 	if (r > 0 && b < 0) || (r < 0 && b > 0) {
 		r += b
@@ -161,6 +162,14 @@ func getStringValue(env *ast.Env, node ast.Node) string {
 		}
 	}
 	return collect(node, []rune{})
+}
+
+func getMapKey(env *ast.Env, node ast.Node) string {
+	v := Whnf(env, node)
+	if i, ok := v.(ast.IntNode); ok {
+		return strconv.FormatInt(i.Val, 10)
+	}
+	return getStringValue(env, v)
 }
 
 func MakeStringNode(s string) ast.Node {
@@ -325,6 +334,34 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 			return node
 		case ast.NilNode:
 			return node
+		case ast.MapNode:
+			return node
+		case ast.SetNode:
+			return node
+		case ast.HLookupPartialNode:
+			return node
+		case ast.HInsertPartialNode1:
+			return node
+		case ast.HInsertPartialNode2:
+			return node
+		case ast.MemberPartialNode:
+			return node
+		case ast.SplitPartialNode:
+			return node
+		case ast.ListGetPartialNode:
+			return node
+		case ast.ListSetPartialNode1:
+			return node
+		case ast.ListSetPartialNode2:
+			return node
+		case ast.MemoizeNode:
+			return node
+		case ast.SortByPartialNode:
+			return node
+		case ast.HLookupDefPartialNode1:
+			return node
+		case ast.HLookupDefPartialNode2:
+			return node
 		case ast.LamNode:
 			return ast.ClosureNode{Var: node.Var, Body: node.Body, Env: env}
 		case ast.ClosureNode:
@@ -365,8 +402,12 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 		case ast.VarNode:
 			name := node.Name
 			switch name {
-			case "hd", "tl", "show", "read", "lines", "numval", "length", "reverse":
+			case "hd", "tl", "show", "read", "lines", "numval", "length", "reverse", "h_lookup", "h_insert", "member", "split", "parse_ints", "list_get", "list_set", "memoize", "sort_by", "sort_ints", "sort_edges", "sort_pts", "h_lookup_def":
 				return node
+			case "empty_map":
+				return ast.MapNode{Map: make(map[string]ast.Node)}
+			case "empty_set":
+				return ast.SetNode{Set: make(map[string]bool)}
 			}
 
 			var val ast.Node
@@ -658,6 +699,139 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 		case ast.AppNode:
 			fVal := Whnf(env, node.Left)
 			switch f := fVal.(type) {
+			case ast.HLookupPartialNode:
+				key := getMapKey(env, node.Right)
+				val, ok := f.Map[key]
+				if !ok {
+					panic(ast.RuntimeError{Msg: "h_lookup: key not found: " + key})
+				}
+				return val
+			case ast.HInsertPartialNode1:
+				key := getMapKey(env, node.Right)
+				return ast.HInsertPartialNode2{Map: f.Map, Key: key}
+			case ast.HInsertPartialNode2:
+				val := Whnf(env, node.Right)
+				newMap := make(map[string]ast.Node, len(f.Map)+1)
+				for k, v := range f.Map {
+					newMap[k] = v
+				}
+				newMap[f.Key] = val
+				return ast.MapNode{Map: newMap}
+			case ast.MemberPartialNode:
+				key := getMapKey(env, node.Right)
+				_, ok := f.Set[key]
+				return ast.BoolNode{Val: ok}
+			case ast.SplitPartialNode:
+				s := getStringValue(env, node.Right)
+				var res []string
+				var current strings.Builder
+				delims := f.Delims
+				for _, r := range s {
+					isDelim := false
+					for _, d := range delims {
+						if r == d {
+							isDelim = true
+							break
+						}
+					}
+					if isDelim {
+						if current.Len() > 0 {
+							res = append(res, current.String())
+							current.Reset()
+						}
+					} else {
+						current.WriteRune(r)
+					}
+				}
+				if current.Len() > 0 {
+					res = append(res, current.String())
+				}
+				var listNode ast.Node = ast.NilNode{}
+				for i := len(res) - 1; i >= 0; i-- {
+					listNode = ast.ConsNode{Head: MakeStringNode(res[i]), Tail: listNode}
+				}
+				return listNode
+			case ast.ListGetPartialNode:
+				idxVal := Whnf(env, node.Right)
+				idx := idxVal.(ast.IntNode).Val
+				if idx < 0 || idx >= int64(len(f.List)) {
+					panic(ast.RuntimeError{Msg: fmt.Sprintf("list_get: index out of bounds: %d (size %d)", idx, len(f.List))})
+				}
+				return ast.IntNode{Val: f.List[idx]}
+			case ast.ListSetPartialNode1:
+				idxVal := Whnf(env, node.Right)
+				idx := idxVal.(ast.IntNode).Val
+				return ast.ListSetPartialNode2{List: f.List, Index: idx}
+			case ast.ListSetPartialNode2:
+				valNode := Whnf(env, node.Right)
+				val := valNode.(ast.IntNode).Val
+				idx := f.Index
+				if idx < 0 || idx >= int64(len(f.List)) {
+					panic(ast.RuntimeError{Msg: fmt.Sprintf("list_set: index out of bounds: %d (size %d)", idx, len(f.List))})
+				}
+				newList := make([]int64, len(f.List))
+				copy(newList, f.List)
+				newList[idx] = val
+				var listNode ast.Node = ast.NilNode{}
+				for i := len(newList) - 1; i >= 0; i-- {
+					listNode = ast.ConsNode{Head: ast.IntNode{Val: newList[i]}, Tail: listNode}
+				}
+				return listNode
+			case ast.MemoizeNode:
+				argVal := Whnf(env, node.Right)
+				key := PrintNode(env, argVal)
+				if val, ok := f.Cache[key]; ok {
+					return val
+				}
+				res := Whnf(env, ast.AppNode{Left: f.Func, Right: argVal})
+				f.Cache[key] = res
+				return res
+			case ast.SortByPartialNode:
+				listVal := Whnf(env, node.Right)
+				var elems []ast.Node
+				curr := listVal
+				for {
+					lVal := Whnf(env, curr)
+					if cons, ok := lVal.(ast.ConsNode); ok {
+						elems = append(elems, cons.Head)
+						curr = cons.Tail
+					} else if _, ok := lVal.(ast.NilNode); ok {
+						break
+					} else {
+						panic(ast.RuntimeError{Msg: "sort_by expects a list"})
+					}
+				}
+				var sortErr error
+				slices.SortFunc(elems, func(a, b ast.Node) int {
+					if sortErr != nil {
+						return 0
+					}
+					res1 := Whnf(env, ast.AppNode{Left: f.Cmp, Right: a})
+					res2 := Whnf(env, ast.AppNode{Left: res1, Right: b})
+					if i, ok := res2.(ast.IntNode); ok {
+						return int(i.Val)
+					}
+					sortErr = fmt.Errorf("sort_by: comparison function did not return an integer")
+					return 0
+				})
+				if sortErr != nil {
+					panic(ast.RuntimeError{Msg: sortErr.Error()})
+				}
+				var listNode ast.Node = ast.NilNode{}
+				for i := len(elems) - 1; i >= 0; i-- {
+					listNode = ast.ConsNode{Head: elems[i], Tail: listNode}
+				}
+				return listNode
+			case ast.HLookupDefPartialNode1:
+				key := getMapKey(env, node.Right)
+				return ast.HLookupDefPartialNode2{Map: f.Map, Key: key}
+			case ast.HLookupDefPartialNode2:
+				valNode := Whnf(env, node.Right)
+				val, ok := f.Map[f.Key]
+				if !ok {
+					return valNode
+				}
+				return val
 			case ast.VarNode:
 				switch f.Name {
 				case "hd":
@@ -709,7 +883,7 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 						}
 						return r
 					}, s)
-					v, err := strconv.Atoi(sTrimmed)
+					v, err := strconv.ParseInt(sTrimmed, 10, 64)
 					if err != nil {
 						panic(ast.RuntimeError{Msg: "numval: invalid integer: " + s})
 					}
@@ -719,7 +893,7 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 					s := PrintNode(env, evaluatedNode)
 					return MakeStringNode(s)
 				case "length":
-					length := 0
+					var length int64 = 0
 					curr := node.Right
 					for {
 						lVal := Whnf(env, curr)
@@ -748,6 +922,175 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 						}
 					}
 					return reversed
+				case "h_lookup":
+					mapVal := Whnf(env, node.Right)
+					mNode, ok := mapVal.(ast.MapNode)
+					if !ok {
+						panic(ast.RuntimeError{Msg: "h_lookup: expected map as first argument"})
+					}
+					return ast.HLookupPartialNode{Map: mNode.Map}
+				case "h_insert":
+					mapVal := Whnf(env, node.Right)
+					mNode, ok := mapVal.(ast.MapNode)
+					if !ok {
+						panic(ast.RuntimeError{Msg: "h_insert: expected map as first argument"})
+					}
+					return ast.HInsertPartialNode1{Map: mNode.Map}
+				case "member":
+					setVal := Whnf(env, node.Right)
+					sNode, ok := setVal.(ast.SetNode)
+					if !ok {
+						panic(ast.RuntimeError{Msg: "member: expected set as first argument"})
+					}
+					return ast.MemberPartialNode{Set: sNode.Set}
+				case "split":
+					delims := getStringValue(env, node.Right)
+					return ast.SplitPartialNode{Delims: delims}
+				case "parse_ints":
+					s := getStringValue(env, node.Right)
+					var res []int64
+					var current strings.Builder
+					for _, r := range s {
+						if (r >= '0' && r <= '9') || r == '-' {
+							current.WriteRune(r)
+						} else {
+							if current.Len() > 0 {
+								str := current.String()
+								if str != "-" {
+									val, err := strconv.ParseInt(str, 10, 64)
+									if err == nil {
+										res = append(res, val)
+									}
+								}
+								current.Reset()
+							}
+						}
+					}
+					if current.Len() > 0 {
+						str := current.String()
+						if str != "-" {
+							val, err := strconv.ParseInt(str, 10, 64)
+							if err == nil {
+								res = append(res, val)
+							}
+						}
+					}
+					var listNode ast.Node = ast.NilNode{}
+					for i := len(res) - 1; i >= 0; i-- {
+						listNode = ast.ConsNode{Head: ast.IntNode{Val: res[i]}, Tail: listNode}
+					}
+					return listNode
+				case "list_get":
+					listVal := Whnf(env, node.Right)
+					slice := getIntSlice(env, listVal)
+					return ast.ListGetPartialNode{List: slice}
+				case "list_set":
+					listVal := Whnf(env, node.Right)
+					slice := getIntSlice(env, listVal)
+					return ast.ListSetPartialNode1{List: slice}
+				case "memoize":
+					fn := Whnf(env, node.Right)
+					return ast.MemoizeNode{Func: fn, Cache: make(map[string]ast.Node)}
+				case "sort_ints":
+					listVal := Whnf(env, node.Right)
+					var elems []int64
+					curr := listVal
+					for {
+						lVal := Whnf(env, curr)
+						if cons, ok := lVal.(ast.ConsNode); ok {
+							val := Whnf(env, cons.Head).(ast.IntNode).Val
+							elems = append(elems, val)
+							curr = cons.Tail
+						} else if _, ok := lVal.(ast.NilNode); ok {
+							break
+						} else {
+							panic(ast.RuntimeError{Msg: "sort_ints expects a list of integers"})
+						}
+					}
+					slices.Sort(elems)
+					var listNode ast.Node = ast.NilNode{}
+					for i := len(elems) - 1; i >= 0; i-- {
+						listNode = ast.ConsNode{Head: ast.IntNode{Val: elems[i]}, Tail: listNode}
+					}
+					return listNode
+				case "sort_edges":
+					listVal := Whnf(env, node.Right)
+					var elems []ast.Node
+					curr := listVal
+					for {
+						lVal := Whnf(env, curr)
+						if cons, ok := lVal.(ast.ConsNode); ok {
+							elems = append(elems, cons.Head)
+							curr = cons.Tail
+						} else if _, ok := lVal.(ast.NilNode); ok {
+							break
+						} else {
+							panic(ast.RuntimeError{Msg: "sort_edges expects a list"})
+						}
+					}
+					slices.SortFunc(elems, func(a, b ast.Node) int {
+						aT := Whnf(env, a).(ast.TupleNode)
+						bT := Whnf(env, b).(ast.TupleNode)
+						d1 := Whnf(env, aT.Elems[2]).(ast.IntNode).Val
+						d2 := Whnf(env, bT.Elems[2]).(ast.IntNode).Val
+						if d1 < d2 {
+							return -1
+						}
+						if d1 > d2 {
+							return 1
+						}
+						return 0
+					})
+					var listNode ast.Node = ast.NilNode{}
+					for i := len(elems) - 1; i >= 0; i-- {
+						listNode = ast.ConsNode{Head: elems[i], Tail: listNode}
+					}
+					return listNode
+				case "sort_pts":
+					listVal := Whnf(env, node.Right)
+					var elems []ast.Node
+					curr := listVal
+					for {
+						lVal := Whnf(env, curr)
+						if cons, ok := lVal.(ast.ConsNode); ok {
+							elems = append(elems, cons.Head)
+							curr = cons.Tail
+						} else if _, ok := lVal.(ast.NilNode); ok {
+							break
+						} else {
+							panic(ast.RuntimeError{Msg: "sort_pts expects a list"})
+						}
+					}
+					slices.SortFunc(elems, func(a, b ast.Node) int {
+						aT := Whnf(env, a).(ast.TupleNode)
+						bT := Whnf(env, b).(ast.TupleNode)
+						aCoords := Whnf(env, aT.Elems[1]).(ast.TupleNode)
+						bCoords := Whnf(env, bT.Elems[1]).(ast.TupleNode)
+						x1 := Whnf(env, aCoords.Elems[0]).(ast.IntNode).Val
+						x2 := Whnf(env, bCoords.Elems[0]).(ast.IntNode).Val
+						if x1 < x2 {
+							return -1
+						}
+						if x1 > x2 {
+							return 1
+						}
+						return 0
+					})
+					var listNode ast.Node = ast.NilNode{}
+					for i := len(elems) - 1; i >= 0; i-- {
+						listNode = ast.ConsNode{Head: elems[i], Tail: listNode}
+					}
+					return listNode
+				case "sort_by":
+					cmpNode := Whnf(env, node.Right)
+					return ast.SortByPartialNode{Cmp: cmpNode}
+				case "h_lookup_def":
+					mapVal := Whnf(env, node.Right)
+					mNode, ok := mapVal.(ast.MapNode)
+					if !ok {
+						panic(ast.RuntimeError{Msg: "h_lookup_def: expected map as first argument"})
+					}
+					return ast.HLookupDefPartialNode1{Map: mNode.Map}
 				default:
 					panic(ast.RuntimeError{Msg: "Unbound variable: " + f.Name})
 				}
@@ -822,7 +1165,7 @@ func escapeString(s string) string {
 func PrintNode(env *ast.Env, n ast.Node) string {
 	switch node := n.(type) {
 	case ast.IntNode:
-		return strconv.Itoa(node.Val)
+		return strconv.FormatInt(node.Val, 10)
 	case ast.BoolNode:
 		if node.Val {
 			return "True"
@@ -832,6 +1175,34 @@ func PrintNode(env *ast.Env, n ast.Node) string {
 		return "'" + escapeChar(node.Val) + "'"
 	case ast.NilNode:
 		return "[]"
+	case ast.MapNode:
+		return "<map>"
+	case ast.SetNode:
+		return "<set>"
+	case ast.HLookupPartialNode:
+		return "<h_lookup partial>"
+	case ast.HInsertPartialNode1:
+		return "<h_insert partial 1>"
+	case ast.HInsertPartialNode2:
+		return "<h_insert partial 2>"
+	case ast.MemberPartialNode:
+		return "<member partial>"
+	case ast.SplitPartialNode:
+		return "<split partial>"
+	case ast.ListGetPartialNode:
+		return "<list_get partial>"
+	case ast.ListSetPartialNode1:
+		return "<list_set partial 1>"
+	case ast.ListSetPartialNode2:
+		return "<list_set partial 2>"
+	case ast.MemoizeNode:
+		return "<memoized>"
+	case ast.SortByPartialNode:
+		return "<sort_by partial>"
+	case ast.HLookupDefPartialNode1:
+		return "<h_lookup_def partial 1>"
+	case ast.HLookupDefPartialNode2:
+		return "<h_lookup_def partial 2>"
 	case ast.LamNode:
 		return "\\" + node.Var + ". <closure>"
 	case ast.ClosureNode:
@@ -949,6 +1320,34 @@ func DebugPrintNode(n ast.Node) string {
 		return fmt.Sprintf("Char(%q)", node.Val)
 	case ast.NilNode:
 		return "Nil"
+	case ast.MapNode:
+		return "Map"
+	case ast.SetNode:
+		return "Set"
+	case ast.HLookupPartialNode:
+		return "HLookupPartial"
+	case ast.HInsertPartialNode1:
+		return "HInsertPartial1"
+	case ast.HInsertPartialNode2:
+		return "HInsertPartial2"
+	case ast.MemberPartialNode:
+		return "MemberPartial"
+	case ast.SplitPartialNode:
+		return "SplitPartial"
+	case ast.ListGetPartialNode:
+		return "ListGetPartial"
+	case ast.ListSetPartialNode1:
+		return "ListSetPartial1"
+	case ast.ListSetPartialNode2:
+		return "ListSetPartial2"
+	case ast.MemoizeNode:
+		return "Memoize"
+	case ast.SortByPartialNode:
+		return "SortByPartial"
+	case ast.HLookupDefPartialNode1:
+		return "HLookupDef1"
+	case ast.HLookupDefPartialNode2:
+		return "HLookupDef2"
 	case ast.VarNode:
 		return fmt.Sprintf("Var(%s)", node.Name)
 	case ast.LamNode:
@@ -1004,4 +1403,26 @@ func DebugPrintNode(n ast.Node) string {
 	default:
 		return fmt.Sprintf("%T", n)
 	}
+}
+
+func getIntSlice(env *ast.Env, n ast.Node) []int64 {
+	var res []int64
+	curr := n
+	for {
+		lVal := Whnf(env, curr)
+		if cons, ok := lVal.(ast.ConsNode); ok {
+			val := Whnf(env, cons.Head)
+			if i, ok := val.(ast.IntNode); ok {
+				res = append(res, i.Val)
+			} else {
+				panic(ast.RuntimeError{Msg: "list_get/list_set expects a list of integers"})
+			}
+			curr = cons.Tail
+		} else if _, ok := lVal.(ast.NilNode); ok {
+			break
+		} else {
+			panic(ast.RuntimeError{Msg: "list_get/list_set expects a list"})
+		}
+	}
+	return res
 }

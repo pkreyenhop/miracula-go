@@ -4,7 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"runtime/pprof"
+	"syscall"
 	"pkreyenhop.com/miracula-go/ast"
 	"pkreyenhop.com/miracula-go/repl"
 	"pkreyenhop.com/miracula-go/typecheck"
@@ -47,12 +49,21 @@ func main() {
 			fmt.Printf("Error creating CPU profile: %v\n", err)
 			os.Exit(1)
 		}
-		defer f.Close()
 		if err := pprof.StartCPUProfile(f); err != nil {
 			fmt.Printf("Error starting CPU profile: %v\n", err)
+			f.Close()
 			os.Exit(1)
 		}
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+		go func() {
+			<-c
+			pprof.StopCPUProfile()
+			f.Close()
+			os.Exit(1)
+		}()
 		defer pprof.StopCPUProfile()
+		defer f.Close()
 	}
 
 	args := flag.Args()

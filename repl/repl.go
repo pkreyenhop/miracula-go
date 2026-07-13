@@ -537,7 +537,7 @@ func LoadScriptFile(filename string, env *ast.Env, typeEnv *typecheck.TypeEnv) (
 		finalTy := sCurr.Apply(selfTy)
 		scheme := typecheck.Generalize(sCurr.ApplyEnv(accTypeEnv), finalTy)
 		accTypeEnv = accTypeEnv.Extend(name, scheme)
-		accEnv = accEnv.Extend(name, desugaredLambda)
+		accEnv = accEnv.ExtendGlobal(name, desugaredLambda)
 	}
 
 	return accEnv, accTypeEnv, nil
@@ -858,7 +858,7 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 					finalTy := sCurr.Apply(selfTy)
 					scheme := typecheck.Generalize(sCurr.ApplyEnv(accTypeEnv), finalTy)
 					accTypeEnv = accTypeEnv.Extend(name, scheme)
-					accEnv = accEnv.Extend(name, finalLambda)
+					accEnv = accEnv.ExtendGlobal(name, finalLambda)
 				}
 
 				for _, name := range order {

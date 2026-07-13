@@ -14,7 +14,7 @@ type Node interface {
 	isNode()
 }
 
-type IntNode struct{ Val int }
+type IntNode struct{ Val int64 }
 type BoolNode struct{ Val bool }
 type CharNode struct{ Val rune }
 type NilNode struct{}
@@ -43,6 +43,66 @@ type AppNode struct {
 	Right Node
 }
 type MatchErrorNode struct{}
+
+type MapNode struct {
+	Map map[string]Node
+}
+
+type SetNode struct {
+	Set map[string]bool
+}
+
+type HLookupPartialNode struct {
+	Map map[string]Node
+}
+
+type HInsertPartialNode1 struct {
+	Map map[string]Node
+}
+
+type HInsertPartialNode2 struct {
+	Map map[string]Node
+	Key string
+}
+
+type MemberPartialNode struct {
+	Set map[string]bool
+}
+
+type SplitPartialNode struct {
+	Delims string
+}
+
+type ListGetPartialNode struct {
+	List []int64
+}
+
+type ListSetPartialNode1 struct {
+	List []int64
+}
+
+type ListSetPartialNode2 struct {
+	List []int64
+	Index int64
+}
+
+type MemoizeNode struct {
+	Func  Node
+	Cache map[string]Node
+}
+
+type SortByPartialNode struct {
+	Cmp Node
+}
+
+type HLookupDefPartialNode1 struct {
+	Map map[string]Node
+}
+
+type HLookupDefPartialNode2 struct {
+	Map map[string]Node
+	Key string
+}
 
 
 type ThunkState int
@@ -129,6 +189,20 @@ func (LtNode) isNode()          {}
 func (GtNode) isNode()          {}
 func (LeNode) isNode()          {}
 func (GeNode) isNode()          {}
+func (MapNode) isNode()         {}
+func (SetNode) isNode()         {}
+func (HLookupPartialNode) isNode() {}
+func (HInsertPartialNode1) isNode() {}
+func (HInsertPartialNode2) isNode() {}
+func (MemberPartialNode) isNode() {}
+func (SplitPartialNode) isNode() {}
+func (ListGetPartialNode) isNode() {}
+func (ListSetPartialNode1) isNode() {}
+func (ListSetPartialNode2) isNode() {}
+func (MemoizeNode) isNode() {}
+func (SortByPartialNode) isNode() {}
+func (HLookupDefPartialNode1) isNode() {}
+func (HLookupDefPartialNode2) isNode() {}
 
 
 type Binding struct {
@@ -144,7 +218,7 @@ type Pat interface {
 	isPat()
 }
 
-type PatInt struct{ Val int }
+type PatInt struct{ Val int64 }
 type PatBool struct{ Val bool }
 type PatChar struct{ Val rune }
 type PatVar struct{ Name string }
@@ -181,9 +255,10 @@ func (FilterQual) isQualifier()    {}
 // ==========================================================================
 
 type Env struct {
-	Parent *Env
-	Name   string
-	Val    Node
+	Parent  *Env
+	Name    string
+	Val     Node
+	Globals map[string]Node
 }
 
 func (e *Env) Lookup(x string) (Node, bool) {
@@ -192,11 +267,28 @@ func (e *Env) Lookup(x string) (Node, bool) {
 			return curr.Val, true
 		}
 	}
+	if e != nil && e.Globals != nil {
+		if val, ok := e.Globals[x]; ok {
+			return val, true
+		}
+	}
 	return nil, false
 }
 
 func (e *Env) Extend(x string, val Node) *Env {
-	return &Env{Parent: e, Name: x, Val: val}
+	var globals map[string]Node
+	if e != nil {
+		globals = e.Globals
+	}
+	return &Env{Parent: e, Name: x, Val: val, Globals: globals}
+}
+
+func (e *Env) ExtendGlobal(x string, val Node) *Env {
+	if e.Globals == nil {
+		e.Globals = make(map[string]Node)
+	}
+	e.Globals[x] = val
+	return e
 }
 
 func (e *Env) GetNames() []string {
@@ -208,14 +300,22 @@ func (e *Env) GetNames() []string {
 			names = append(names, curr.Name)
 		}
 	}
+	if e != nil && e.Globals != nil {
+		for k := range e.Globals {
+			if !seen[k] {
+				seen[k] = true
+				names = append(names, k)
+			}
+		}
+	}
 	return names
 }
 
 func NewEnv() *Env {
-	env := &Env{}
-	env = env.Extend("True", BoolNode{Val: true})
-	env = env.Extend("False", BoolNode{Val: false})
-	return env
+	globals := make(map[string]Node)
+	globals["True"] = BoolNode{Val: true}
+	globals["False"] = BoolNode{Val: false}
+	return &Env{Globals: globals}
 }
 
 // ==========================================================================

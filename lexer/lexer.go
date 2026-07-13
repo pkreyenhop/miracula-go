@@ -55,7 +55,7 @@ const (
 
 type Token struct {
 	Type TokenType
-	Int  int
+	Int  int64
 	Str  string
 	Char rune
 	Line int
@@ -311,7 +311,7 @@ func TokenizeWithPos(str string, line int) []Token {
 			for j < size && unicode.IsDigit(runes[j]) {
 				j++
 			}
-			val, _ := strconv.Atoi(string(runes[i:j]))
+			val, _ := strconv.ParseInt(string(runes[i:j]), 10, 64)
 			addTok(Token{Type: TOK_INT, Int: val})
 			i = j
 			continue
@@ -584,7 +584,7 @@ func TokenToString(t Token) string {
 	case TOK_ELSE:
 		return "else"
 	case TOK_INT:
-		return strconv.Itoa(t.Int)
+		return strconv.FormatInt(t.Int, 10)
 	case TOK_VAR:
 		return t.Str
 	case TOK_EOF:

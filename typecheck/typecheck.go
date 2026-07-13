@@ -75,6 +75,23 @@ func (t TupleType) String() string {
 	return "(" + strings.Join(strs, ", ") + ")"
 }
 
+type MapType struct {
+	Key  Type
+	Val  Type
+}
+
+func (t MapType) String() string {
+	return "Map(" + t.Key.String() + ", " + t.Val.String() + ")"
+}
+
+type SetType struct {
+	Elem Type
+}
+
+func (t SetType) String() string {
+	return "Set(" + t.Elem.String() + ")"
+}
+
 type Scheme struct {
 	Vars []int
 	Ty   Type
@@ -158,6 +175,15 @@ func (sub Substitution) applyWithSeen(t Type, seen map[int]bool) Type {
 			elems = append(elems, sub.applyWithSeen(e, seen))
 		}
 		return TupleType{Elems: elems}
+	case MapType:
+		return MapType{
+			Key: sub.applyWithSeen(ty.Key, seen),
+			Val: sub.applyWithSeen(ty.Val, seen),
+		}
+	case SetType:
+		return SetType{
+			Elem: sub.applyWithSeen(ty.Elem, seen),
+		}
 	}
 	return t
 }
@@ -247,6 +273,20 @@ func (s1 Substitution) Unify(t1, t2 Type) (Substitution, error) {
 			return sCurr, nil
 		}
 		return nil, fmt.Errorf("cannot unify %s and %s", t1, t2)
+	case MapType:
+		if ty2, ok := t2.(MapType); ok {
+			s2, err := s1.Unify(ty1.Key, ty2.Key)
+			if err != nil {
+				return nil, err
+			}
+			return s2.Unify(ty1.Val, ty2.Val)
+		}
+		return nil, fmt.Errorf("cannot unify %s and %s", t1, t2)
+	case SetType:
+		if ty2, ok := t2.(SetType); ok {
+			return s1.Unify(ty1.Elem, ty2.Elem)
+		}
+		return nil, fmt.Errorf("cannot unify %s and %s", t1, t2)
 	}
 
 	return nil, fmt.Errorf("cannot unify %s and %s", t1, t2)
@@ -278,6 +318,10 @@ func occurs(id int, t Type) bool {
 				return true
 			}
 		}
+	case MapType:
+		return occurs(id, ty.Key) || occurs(id, ty.Val)
+	case SetType:
+		return occurs(id, ty.Elem)
 	}
 	return false
 }
@@ -303,6 +347,17 @@ func freeVars(t Type) map[int]bool {
 			for k := range freeVars(e) {
 				f[k] = true
 			}
+		}
+	case MapType:
+		for k := range freeVars(ty.Key) {
+			f[k] = true
+		}
+		for k := range freeVars(ty.Val) {
+			f[k] = true
+		}
+	case SetType:
+		for k := range freeVars(ty.Elem) {
+			f[k] = true
 		}
 	}
 	return f
@@ -847,6 +902,22 @@ func DefaultTypeEnv() *TypeEnv {
 	env.Map["numval"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TChar}, To: TInt}}
 	env.Map["length"] = Scheme{Vars: []int{0}, Ty: FunType{From: ListType{Elem: VarType{Id: 0}}, To: TInt}}
 	env.Map["reverse"] = Scheme{Vars: []int{0}, Ty: FunType{From: ListType{Elem: VarType{Id: 0}}, To: ListType{Elem: VarType{Id: 0}}}}
+
+	env.Map["h_lookup"] = Scheme{Vars: []int{0, 1}, Ty: FunType{From: MapType{Key: VarType{Id: 0}, Val: VarType{Id: 1}}, To: FunType{From: VarType{Id: 0}, To: VarType{Id: 1}}}}
+	env.Map["h_insert"] = Scheme{Vars: []int{0, 1}, Ty: FunType{From: MapType{Key: VarType{Id: 0}, Val: VarType{Id: 1}}, To: FunType{From: VarType{Id: 0}, To: FunType{From: VarType{Id: 1}, To: MapType{Key: VarType{Id: 0}, Val: VarType{Id: 1}}}}}}
+	env.Map["member"] = Scheme{Vars: []int{0}, Ty: FunType{From: SetType{Elem: VarType{Id: 0}}, To: FunType{From: VarType{Id: 0}, To: TBool}}}
+	env.Map["split"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TChar}, To: FunType{From: ListType{Elem: TChar}, To: ListType{Elem: ListType{Elem: TChar}}}}}
+	env.Map["parse_ints"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TChar}, To: ListType{Elem: TInt}}}
+	env.Map["list_get"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TInt}, To: FunType{From: TInt, To: TInt}}}
+	env.Map["list_set"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TInt}, To: FunType{From: TInt, To: FunType{From: TInt, To: ListType{Elem: TInt}}}}}
+	env.Map["memoize"] = Scheme{Vars: []int{0, 1}, Ty: FunType{From: FunType{From: VarType{Id: 0}, To: VarType{Id: 1}}, To: FunType{From: VarType{Id: 0}, To: VarType{Id: 1}}}}
+	env.Map["sort_by"] = Scheme{Vars: []int{0}, Ty: FunType{From: FunType{From: VarType{Id: 0}, To: FunType{From: VarType{Id: 0}, To: TInt}}, To: FunType{From: ListType{Elem: VarType{Id: 0}}, To: ListType{Elem: VarType{Id: 0}}}}}
+	env.Map["empty_map"] = Scheme{Vars: []int{0, 1}, Ty: MapType{Key: VarType{Id: 0}, Val: VarType{Id: 1}}}
+	env.Map["empty_set"] = Scheme{Vars: []int{0}, Ty: SetType{Elem: VarType{Id: 0}}}
+	env.Map["sort_ints"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TInt}, To: ListType{Elem: TInt}}}
+	env.Map["sort_edges"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TupleType{Elems: []Type{TInt, TInt, TInt}}}, To: ListType{Elem: TupleType{Elems: []Type{TInt, TInt, TInt}}}}}
+	env.Map["sort_pts"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TupleType{Elems: []Type{TInt, TupleType{Elems: []Type{TInt, TInt, TInt}}}}}, To: ListType{Elem: TupleType{Elems: []Type{TInt, TupleType{Elems: []Type{TInt, TInt, TInt}}}}}}}
+	env.Map["h_lookup_def"] = Scheme{Vars: []int{0, 1}, Ty: FunType{From: MapType{Key: VarType{Id: 0}, Val: VarType{Id: 1}}, To: FunType{From: VarType{Id: 0}, To: FunType{From: VarType{Id: 1}, To: VarType{Id: 1}}}}}
 
 	return env
 }
