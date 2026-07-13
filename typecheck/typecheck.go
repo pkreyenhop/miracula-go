@@ -2,8 +2,8 @@ package typecheck
 
 import (
 	"fmt"
-	"strings"
 	"pkreyenhop.com/miracula-go/ast"
+	"strings"
 )
 
 type Type interface {
@@ -11,6 +11,7 @@ type Type interface {
 }
 
 type PrimType int
+
 const (
 	TInt PrimType = iota
 	TBool
@@ -76,8 +77,8 @@ func (t TupleType) String() string {
 }
 
 type MapType struct {
-	Key  Type
-	Val  Type
+	Key Type
+	Val Type
 }
 
 func (t MapType) String() string {
@@ -90,6 +91,14 @@ type SetType struct {
 
 func (t SetType) String() string {
 	return "Set(" + t.Elem.String() + ")"
+}
+
+type VecType struct {
+	Elem Type
+}
+
+func (t VecType) String() string {
+	return "Vec(" + t.Elem.String() + ")"
 }
 
 type Scheme struct {
@@ -182,6 +191,10 @@ func (sub Substitution) applyWithSeen(t Type, seen map[int]bool) Type {
 		}
 	case SetType:
 		return SetType{
+			Elem: sub.applyWithSeen(ty.Elem, seen),
+		}
+	case VecType:
+		return VecType{
 			Elem: sub.applyWithSeen(ty.Elem, seen),
 		}
 	}
@@ -287,6 +300,11 @@ func (s1 Substitution) Unify(t1, t2 Type) (Substitution, error) {
 			return s1.Unify(ty1.Elem, ty2.Elem)
 		}
 		return nil, fmt.Errorf("cannot unify %s and %s", t1, t2)
+	case VecType:
+		if ty2, ok := t2.(VecType); ok {
+			return s1.Unify(ty1.Elem, ty2.Elem)
+		}
+		return nil, fmt.Errorf("cannot unify %s and %s", t1, t2)
 	}
 
 	return nil, fmt.Errorf("cannot unify %s and %s", t1, t2)
@@ -322,6 +340,8 @@ func occurs(id int, t Type) bool {
 		return occurs(id, ty.Key) || occurs(id, ty.Val)
 	case SetType:
 		return occurs(id, ty.Elem)
+	case VecType:
+		return occurs(id, ty.Elem)
 	}
 	return false
 }
@@ -356,6 +376,10 @@ func freeVars(t Type) map[int]bool {
 			f[k] = true
 		}
 	case SetType:
+		for k := range freeVars(ty.Elem) {
+			f[k] = true
+		}
+	case VecType:
 		for k := range freeVars(ty.Elem) {
 			f[k] = true
 		}
@@ -648,11 +672,16 @@ func (tc *TypeChecker) inferInternal(env *TypeEnv, node ast.Node, sub Substituti
 		var leftNode, rightNode ast.Node
 		var opName string
 		switch op := n.(type) {
-		case ast.AddNode: leftNode, rightNode, opName = op.Left, op.Right, "+"
-		case ast.SubNode: leftNode, rightNode, opName = op.Left, op.Right, "-"
-		case ast.MulNode: leftNode, rightNode, opName = op.Left, op.Right, "*"
-		case ast.DivNode: leftNode, rightNode, opName = op.Left, op.Right, "/"
-		case ast.ModNode: leftNode, rightNode, opName = op.Left, op.Right, "mod"
+		case ast.AddNode:
+			leftNode, rightNode, opName = op.Left, op.Right, "+"
+		case ast.SubNode:
+			leftNode, rightNode, opName = op.Left, op.Right, "-"
+		case ast.MulNode:
+			leftNode, rightNode, opName = op.Left, op.Right, "*"
+		case ast.DivNode:
+			leftNode, rightNode, opName = op.Left, op.Right, "/"
+		case ast.ModNode:
+			leftNode, rightNode, opName = op.Left, op.Right, "mod"
 		}
 		tL, sub1, err := tc.Infer(env, leftNode, sub)
 		if err != nil {
@@ -676,8 +705,10 @@ func (tc *TypeChecker) inferInternal(env *TypeEnv, node ast.Node, sub Substituti
 		var leftNode, rightNode ast.Node
 		var opName string
 		switch op := n.(type) {
-		case ast.EqNode: leftNode, rightNode, opName = op.Left, op.Right, "=="
-		case ast.NeNode: leftNode, rightNode, opName = op.Left, op.Right, "~="
+		case ast.EqNode:
+			leftNode, rightNode, opName = op.Left, op.Right, "=="
+		case ast.NeNode:
+			leftNode, rightNode, opName = op.Left, op.Right, "~="
 		}
 		tL, sub1, err := tc.Infer(env, leftNode, sub)
 		if err != nil {
@@ -697,10 +728,14 @@ func (tc *TypeChecker) inferInternal(env *TypeEnv, node ast.Node, sub Substituti
 		var leftNode, rightNode ast.Node
 		var opName string
 		switch op := n.(type) {
-		case ast.LtNode: leftNode, rightNode, opName = op.Left, op.Right, "<"
-		case ast.GtNode: leftNode, rightNode, opName = op.Left, op.Right, ">"
-		case ast.LeNode: leftNode, rightNode, opName = op.Left, op.Right, "<="
-		case ast.GeNode: leftNode, rightNode, opName = op.Left, op.Right, ">="
+		case ast.LtNode:
+			leftNode, rightNode, opName = op.Left, op.Right, "<"
+		case ast.GtNode:
+			leftNode, rightNode, opName = op.Left, op.Right, ">"
+		case ast.LeNode:
+			leftNode, rightNode, opName = op.Left, op.Right, "<="
+		case ast.GeNode:
+			leftNode, rightNode, opName = op.Left, op.Right, ">="
 		}
 		tL, sub1, err := tc.Infer(env, leftNode, sub)
 		if err != nil {
@@ -724,8 +759,10 @@ func (tc *TypeChecker) inferInternal(env *TypeEnv, node ast.Node, sub Substituti
 		var leftNode, rightNode ast.Node
 		var opName string
 		switch op := n.(type) {
-		case ast.AppendNode: leftNode, rightNode, opName = op.Left, op.Right, "++"
-		case ast.DiffNode: leftNode, rightNode, opName = op.Left, op.Right, "--"
+		case ast.AppendNode:
+			leftNode, rightNode, opName = op.Left, op.Right, "++"
+		case ast.DiffNode:
+			leftNode, rightNode, opName = op.Left, op.Right, "--"
 		}
 		tL, sub1, err := tc.Infer(env, leftNode, sub)
 		if err != nil {
@@ -919,7 +956,11 @@ func DefaultTypeEnv() *TypeEnv {
 	env.Map["sort_edges"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TupleType{Elems: []Type{TInt, TInt, TInt}}}, To: ListType{Elem: TupleType{Elems: []Type{TInt, TInt, TInt}}}}}
 	env.Map["sort_pts"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TupleType{Elems: []Type{TInt, TupleType{Elems: []Type{TInt, TInt, TInt}}}}}, To: ListType{Elem: TupleType{Elems: []Type{TInt, TupleType{Elems: []Type{TInt, TInt, TInt}}}}}}}
 	env.Map["h_lookup_def"] = Scheme{Vars: []int{0, 1}, Ty: FunType{From: MapType{Key: VarType{Id: 0}, Val: VarType{Id: 1}}, To: FunType{From: VarType{Id: 0}, To: FunType{From: VarType{Id: 1}, To: VarType{Id: 1}}}}}
+	env.Map["to_vec"] = Scheme{Vars: []int{0}, Ty: FunType{From: ListType{Elem: VarType{Id: 0}}, To: VecType{Elem: VarType{Id: 0}}}}
+	env.Map["vec_get"] = Scheme{Vars: []int{0}, Ty: FunType{From: VecType{Elem: VarType{Id: 0}}, To: FunType{From: TInt, To: VarType{Id: 0}}}}
+	env.Map["vec_len"] = Scheme{Vars: []int{0}, Ty: FunType{From: VecType{Elem: VarType{Id: 0}}, To: TInt}}
+	env.Map["vec_set"] = Scheme{Vars: []int{0}, Ty: FunType{From: VecType{Elem: VarType{Id: 0}}, To: FunType{From: TInt, To: FunType{From: VarType{Id: 0}, To: VecType{Elem: VarType{Id: 0}}}}}}
+	env.Map["vec_to_list"] = Scheme{Vars: []int{0}, Ty: FunType{From: VecType{Elem: VarType{Id: 0}}, To: ListType{Elem: VarType{Id: 0}}}}
 
 	return env
 }
-

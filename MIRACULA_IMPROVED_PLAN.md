@@ -8,7 +8,9 @@ This document outlines the step-by-step technical implementation plan for extend
 
 **Third status update (2026-07-14).** Phase 8.3–8.4 landed (frame shrink + tail-position thunk trampolining; `foldr` depth <100 k → ~400 k). A fresh profile then showed GC/allocation at ~60 % with the comprehension machinery and the `sort_edges` comparator as the top interpreter costs, so the profile-guided slice of Phase 9 landed next: allocation-free skipping in `stepZFGenerator` and decorate-sort-undecorate in `sort_edges`/`sort_pts`. **`aoc8.m` is now 244188 in 1.45 s.** (`-cpuprofile` also now flushes in `-x` mode via a REPL exit hook; it previously wrote an empty file because `EvaluateAndExit` exits with `os.Exit`.)
 
-**Fourth status update (2026-07-14) — Phase 9 complete.** The lexical-addressing resolver (9.1/9.3) landed first, then the explicit-continuation machine (9.5): `whnfCore` now runs on a heap-backed control stack, so **evaluation depth is unbounded** — `foldr` over `[1..3000000]` evaluates in 3.4 s (a fatal stack overflow at 500 k before), and the fully lazy fold over `[1..1000000]` in 1.9 s. Application fast paths, inline control/pending buffers, and an amortized interrupt check keep the cost of the machine at ~3 % on `aoc8.m` (median 1.49 s). Item 9.2 (multi-binding frames) was evaluated and **rejected on measured grounds** — see below. Remaining open work: Phase 10, plus strictness analysis (the residue of 9.4) and CAF thunks for globals (the Phase 6 follow-up; a self-recursive global like `x = x + 1` now loops in constant space instead of crashing the Go stack — blackhole detection for globals needs them to be memoized cells).
+**Fourth status update (2026-07-14) — Phase 9 complete.** The lexical-addressing resolver (9.1/9.3) landed first, then the explicit-continuation machine (9.5): `whnfCore` now runs on a heap-backed control stack, so **evaluation depth is unbounded** — `foldr` over `[1..3000000]` evaluates in 3.4 s (a fatal stack overflow at 500 k before), and the fully lazy fold over `[1..1000000]` in 1.9 s. Application fast paths, inline control/pending buffers, and an amortized interrupt check keep the cost of the machine at ~3 % on `aoc8.m` (median 1.49 s). Item 9.2 (multi-binding frames) was evaluated and **rejected on measured grounds** — see below.
+
+**Fifth status update (2026-07-14) — Phase 10 complete.** Maps are immutable AVL trees with native int64/string keys (50 000 `h_insert`s: **422 ms**, vs not finishing within 115 s before), vectors are a first-class type (`to_vec`/`vec_get`/`vec_len`/`vec_set`/`vec_to_list`, O(1) reads), and `memoize` keys integer arguments without serialization. All plan phases are now closed. Remaining future work beyond this plan: strictness analysis + uncurrying (compiler stage), CAF thunks for globals (Phase 6 follow-up; a self-recursive global like `x = x + 1` loops in constant space instead of crashing — blackhole detection for globals needs memoized cells), and documenting the native builtins in the manual, which currently lists none of them.
 
 ---
 
@@ -278,14 +280,16 @@ Measured effect of items 1+3 (2026-07-14): no regression and no headline speedup
 
 ---
 
-## 10. Data-Structure Upgrades: Persistent Int-Keyed Maps & Real Vectors 🟡
+## 10. Data-Structure Upgrades: Persistent Int-Keyed Maps & Real Vectors ✅ (implemented)
 
-1. **Persistent map (`ast.MapNode`)**: replace the copy-on-write `map[string]Node` with an immutable balanced tree or HAMT keyed by `int64` (fall back to string keys only for string maps):
-   - `h_insert` becomes O(log n) with structural sharing instead of O(n) full copy.
-   - Kills the `strconv.FormatInt` allocation on every `getMapKey` call.
-   - Union-find in Phase 7 drops from O(E·N) worst case to O(E log N).
-2. **Vector value type**: new `VecNode{Elems []ast.Node}` (plus `IntVecNode{[]int64}` fast path) with `to_vec`, `vec_get` (true O(1)), `vec_len`, `vec_set` (documented O(n) copy, or persistent via the same tree). Deprecate the current `list_get`/`list_set`, which re-convert the list on every call.
-3. **`memoize`**: key integer arguments on the `int64` value directly; use `PrintNode` only for compound keys.
+1. ✅ **Persistent map (`ast.MapNode`)**: now an immutable AVL tree (`ast/maptree.go`) whose keys are `ast.MapKey` — an `int64` or a string, never a formatted string for integers:
+   - `h_insert` is O(log n) time *and space* with structural sharing; the old code copied the whole Go map per insert.
+   - `h_lookup`/`h_lookup_def` are allocation-free; no `strconv.FormatInt` per operation.
+   - `h_lookup_def` also became lazier: the default is only evaluated on a miss (it was always forced before).
+   - Measured: building a 50 000-entry map by repeated `h_insert` takes **422 ms**; the previous representation did not finish within a 115 s cap (O(n²) copying) — an unbounded asymptotic win.
+   - Sets are untouched: no set-insert builtin exists, so `SetNode` stays a Go map until sets grow an API.
+2. ✅ **Vector value type**: `VecNode{Elems []ast.Node}` with `to_vec :: [*] -> vec *`, `vec_get :: vec * -> num -> *` (true O(1), elements stay lazy), `vec_len`, `vec_set` (O(n) copy of the element slice, persistent — the original vector is untouched), and `vec_to_list`. Registered in the type checker as `VecType`. `list_get`/`list_set` remain for compatibility but vectors are the supported path — they never re-convert a list per call. (`IntVecNode` fast path deferred until a workload needs it.)
+3. ✅ **`memoize`**: integer arguments key a dedicated `map[int64]Node` cache directly; `PrintNode` serialization is only used for compound arguments.
 
 ---
 

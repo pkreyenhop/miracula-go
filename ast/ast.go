@@ -58,7 +58,7 @@ type AppNode struct {
 type MatchErrorNode struct{}
 
 type MapNode struct {
-	Map map[string]Node
+	Tree *MapTree
 }
 
 type SetNode struct {
@@ -66,16 +66,16 @@ type SetNode struct {
 }
 
 type HLookupPartialNode struct {
-	Map map[string]Node
+	Tree *MapTree
 }
 
 type HInsertPartialNode1 struct {
-	Map map[string]Node
+	Tree *MapTree
 }
 
 type HInsertPartialNode2 struct {
-	Map map[string]Node
-	Key string
+	Tree *MapTree
+	Key  MapKey
 }
 
 type MemberPartialNode struct {
@@ -102,8 +102,9 @@ type ListSetPartialNode2 struct {
 }
 
 type MemoizeNode struct {
-	Func  Node
-	Cache map[string]Node
+	Func     Node
+	Cache    map[string]Node
+	IntCache map[int64]Node
 }
 
 type SortByPartialNode struct {
@@ -111,12 +112,29 @@ type SortByPartialNode struct {
 }
 
 type HLookupDefPartialNode1 struct {
-	Map map[string]Node
+	Tree *MapTree
 }
 
 type HLookupDefPartialNode2 struct {
-	Map map[string]Node
-	Key string
+	Tree *MapTree
+	Key  MapKey
+}
+
+type VecNode struct {
+	Elems []Node
+}
+
+type VecGetPartialNode struct {
+	Elems []Node
+}
+
+type VecSetPartialNode1 struct {
+	Elems []Node
+}
+
+type VecSetPartialNode2 struct {
+	Elems []Node
+	Index int64
 }
 
 type ThunkState int
@@ -220,6 +238,10 @@ func (MemoizeNode) isNode()            {}
 func (SortByPartialNode) isNode()      {}
 func (HLookupDefPartialNode1) isNode() {}
 func (HLookupDefPartialNode2) isNode() {}
+func (VecNode) isNode()                {}
+func (VecGetPartialNode) isNode()      {}
+func (VecSetPartialNode1) isNode()     {}
+func (VecSetPartialNode2) isNode()     {}
 
 type Binding struct {
 	Name string

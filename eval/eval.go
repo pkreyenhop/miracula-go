@@ -196,7 +196,24 @@ func getStringValue(env *ast.Env, node ast.Node) string {
 	}
 }
 
-func getMapKey(env *ast.Env, node ast.Node) string {
+// getMapKey evaluates a map key without stringifying integers: int keys
+// stay int64s inside ast.MapKey, so no allocation per map operation.
+func getMapKey(env *ast.Env, node ast.Node) ast.MapKey {
+	v := Whnf(env, node)
+	if i, ok := v.(ast.IntNode); ok {
+		return ast.MapKey{I: i.Val}
+	}
+	return ast.MapKey{S: getStringValue(env, v), Str: true}
+}
+
+func mapKeyString(k ast.MapKey) string {
+	if k.Str {
+		return k.S
+	}
+	return strconv.FormatInt(k.I, 10)
+}
+
+func getSetKey(env *ast.Env, node ast.Node) string {
 	v := Whnf(env, node)
 	if i, ok := v.(ast.IntNode); ok {
 		return strconv.FormatInt(i.Val, 10)
@@ -538,6 +555,14 @@ machine:
 			v = node
 		case ast.HLookupDefPartialNode2:
 			v = node
+		case ast.VecNode:
+			v = node
+		case ast.VecGetPartialNode:
+			v = node
+		case ast.VecSetPartialNode1:
+			v = node
+		case ast.VecSetPartialNode2:
+			v = node
 		case ast.LamNode:
 			v = ast.ClosureNode{Var: node.Var, Body: node.Body, Env: env}
 		case ast.ClosureNode:
@@ -625,10 +650,10 @@ machine:
 		case ast.VarNode:
 			name := node.Name
 			switch name {
-			case "hd", "tl", "show", "read", "lines", "numval", "length", "reverse", "seq", "h_lookup", "h_insert", "member", "split", "parse_ints", "list_get", "list_set", "memoize", "sort_by", "sort_ints", "sort_edges", "sort_pts", "h_lookup_def":
+			case "hd", "tl", "show", "read", "lines", "numval", "length", "reverse", "seq", "h_lookup", "h_insert", "member", "split", "parse_ints", "list_get", "list_set", "memoize", "sort_by", "sort_ints", "sort_edges", "sort_pts", "h_lookup_def", "to_vec", "vec_get", "vec_set", "vec_len", "vec_to_list":
 				v = node
 			case "empty_map":
-				v = ast.MapNode{Map: make(map[string]ast.Node)}
+				v = ast.MapNode{Tree: nil}
 			case "empty_set":
 				v = ast.SetNode{Set: make(map[string]bool)}
 			}
@@ -1051,24 +1076,19 @@ func applyPartial(env *ast.Env, fVal ast.Node, node ast.AppNode) ast.Node {
 	switch f := fVal.(type) {
 	case ast.HLookupPartialNode:
 		key := getMapKey(env, node.Right)
-		val, ok := f.Map[key]
+		val, ok := f.Tree.Lookup(key)
 		if !ok {
-			panic(ast.RuntimeError{Msg: "h_lookup: key not found: " + key})
+			panic(ast.RuntimeError{Msg: "h_lookup: key not found: " + mapKeyString(key)})
 		}
 		return val
 	case ast.HInsertPartialNode1:
 		key := getMapKey(env, node.Right)
-		return ast.HInsertPartialNode2{Map: f.Map, Key: key}
+		return ast.HInsertPartialNode2{Tree: f.Tree, Key: key}
 	case ast.HInsertPartialNode2:
 		val := Whnf(env, node.Right)
-		newMap := make(map[string]ast.Node, len(f.Map)+1)
-		for k, v := range f.Map {
-			newMap[k] = v
-		}
-		newMap[f.Key] = val
-		return ast.MapNode{Map: newMap}
+		return ast.MapNode{Tree: f.Tree.Insert(f.Key, val)}
 	case ast.MemberPartialNode:
-		key := getMapKey(env, node.Right)
+		key := getSetKey(env, node.Right)
 		_, ok := f.Set[key]
 		return ast.BoolNode{Val: ok}
 	case ast.SeqPartialNode:
@@ -1131,6 +1151,15 @@ func applyPartial(env *ast.Env, fVal ast.Node, node ast.AppNode) ast.Node {
 		return listNode
 	case ast.MemoizeNode:
 		argVal := Whnf(env, node.Right)
+		if i, isInt := argVal.(ast.IntNode); isInt {
+			// integer arguments key the cache directly — no serialization
+			if val, ok := f.IntCache[i.Val]; ok {
+				return val
+			}
+			res := Whnf(env, ast.AppNode{Left: f.Func, Right: argVal})
+			f.IntCache[i.Val] = res
+			return res
+		}
 		key := PrintNode(env, argVal)
 		if val, ok := f.Cache[key]; ok {
 			return val
@@ -1176,14 +1205,38 @@ func applyPartial(env *ast.Env, fVal ast.Node, node ast.AppNode) ast.Node {
 		return listNode
 	case ast.HLookupDefPartialNode1:
 		key := getMapKey(env, node.Right)
-		return ast.HLookupDefPartialNode2{Map: f.Map, Key: key}
+		return ast.HLookupDefPartialNode2{Tree: f.Tree, Key: key}
 	case ast.HLookupDefPartialNode2:
-		valNode := Whnf(env, node.Right)
-		val, ok := f.Map[f.Key]
+		val, ok := f.Tree.Lookup(f.Key)
 		if !ok {
-			return valNode
+			return Whnf(env, node.Right)
 		}
 		return val
+	case ast.VecGetPartialNode:
+		idxVal := Whnf(env, node.Right)
+		idx, isInt := idxVal.(ast.IntNode)
+		if !isInt {
+			panic(ast.RuntimeError{Msg: "vec_get: index must be an integer"})
+		}
+		if idx.Val < 0 || idx.Val >= int64(len(f.Elems)) {
+			panic(ast.RuntimeError{Msg: fmt.Sprintf("vec_get: index out of bounds: %d (size %d)", idx.Val, len(f.Elems))})
+		}
+		return f.Elems[idx.Val]
+	case ast.VecSetPartialNode1:
+		idxVal := Whnf(env, node.Right)
+		idx, isInt := idxVal.(ast.IntNode)
+		if !isInt {
+			panic(ast.RuntimeError{Msg: "vec_set: index must be an integer"})
+		}
+		return ast.VecSetPartialNode2{Elems: f.Elems, Index: idx.Val}
+	case ast.VecSetPartialNode2:
+		if f.Index < 0 || f.Index >= int64(len(f.Elems)) {
+			panic(ast.RuntimeError{Msg: fmt.Sprintf("vec_set: index out of bounds: %d (size %d)", f.Index, len(f.Elems))})
+		}
+		newElems := make([]ast.Node, len(f.Elems))
+		copy(newElems, f.Elems)
+		newElems[f.Index] = bindArg(env, node.Right)
+		return ast.VecNode{Elems: newElems}
 	}
 	return nil
 }
@@ -1282,14 +1335,14 @@ func applyBuiltin(env *ast.Env, name string, node ast.AppNode) ast.Node {
 		if !ok {
 			panic(ast.RuntimeError{Msg: "h_lookup: expected map as first argument"})
 		}
-		return ast.HLookupPartialNode{Map: mNode.Map}
+		return ast.HLookupPartialNode{Tree: mNode.Tree}
 	case "h_insert":
 		mapVal := Whnf(env, node.Right)
 		mNode, ok := mapVal.(ast.MapNode)
 		if !ok {
 			panic(ast.RuntimeError{Msg: "h_insert: expected map as first argument"})
 		}
-		return ast.HInsertPartialNode1{Map: mNode.Map}
+		return ast.HInsertPartialNode1{Tree: mNode.Tree}
 	case "member":
 		setVal := Whnf(env, node.Right)
 		sNode, ok := setVal.(ast.SetNode)
@@ -1344,7 +1397,7 @@ func applyBuiltin(env *ast.Env, name string, node ast.AppNode) ast.Node {
 		return ast.ListSetPartialNode1{List: slice}
 	case "memoize":
 		fn := Whnf(env, node.Right)
-		return ast.MemoizeNode{Func: fn, Cache: make(map[string]ast.Node)}
+		return ast.MemoizeNode{Func: fn, Cache: make(map[string]ast.Node), IntCache: make(map[int64]ast.Node)}
 	case "sort_ints":
 		listVal := Whnf(env, node.Right)
 		var elems []int64
@@ -1409,13 +1462,61 @@ func applyBuiltin(env *ast.Env, name string, node ast.AppNode) ast.Node {
 	case "sort_by":
 		cmpNode := Whnf(env, node.Right)
 		return ast.SortByPartialNode{Cmp: cmpNode}
+	case "to_vec":
+		listVal := Whnf(env, node.Right)
+		var elems []ast.Node
+		curr := listVal
+		for {
+			lVal := Whnf(env, curr)
+			if cons, ok := lVal.(ast.ConsNode); ok {
+				elems = append(elems, cons.Head)
+				curr = cons.Tail
+			} else if _, ok := lVal.(ast.NilNode); ok {
+				break
+			} else {
+				panic(ast.RuntimeError{Msg: "to_vec expects a list"})
+			}
+		}
+		return ast.VecNode{Elems: elems}
+	case "vec_len":
+		vecVal := Whnf(env, node.Right)
+		vNode, ok := vecVal.(ast.VecNode)
+		if !ok {
+			panic(ast.RuntimeError{Msg: "vec_len: expected vector as first argument"})
+		}
+		return ast.IntNode{Val: int64(len(vNode.Elems))}
+	case "vec_get":
+		vecVal := Whnf(env, node.Right)
+		vNode, ok := vecVal.(ast.VecNode)
+		if !ok {
+			panic(ast.RuntimeError{Msg: "vec_get: expected vector as first argument"})
+		}
+		return ast.VecGetPartialNode{Elems: vNode.Elems}
+	case "vec_set":
+		vecVal := Whnf(env, node.Right)
+		vNode, ok := vecVal.(ast.VecNode)
+		if !ok {
+			panic(ast.RuntimeError{Msg: "vec_set: expected vector as first argument"})
+		}
+		return ast.VecSetPartialNode1{Elems: vNode.Elems}
+	case "vec_to_list":
+		vecVal := Whnf(env, node.Right)
+		vNode, ok := vecVal.(ast.VecNode)
+		if !ok {
+			panic(ast.RuntimeError{Msg: "vec_to_list: expected vector as first argument"})
+		}
+		var listNode ast.Node = ast.NilNode{}
+		for i := len(vNode.Elems) - 1; i >= 0; i-- {
+			listNode = ast.ConsNode{Head: vNode.Elems[i], Tail: listNode}
+		}
+		return listNode
 	case "h_lookup_def":
 		mapVal := Whnf(env, node.Right)
 		mNode, ok := mapVal.(ast.MapNode)
 		if !ok {
 			panic(ast.RuntimeError{Msg: "h_lookup_def: expected map as first argument"})
 		}
-		return ast.HLookupDefPartialNode1{Map: mNode.Map}
+		return ast.HLookupDefPartialNode1{Tree: mNode.Tree}
 	default:
 		panic(ast.RuntimeError{Msg: "Unbound variable: " + name})
 	}
@@ -1498,6 +1599,18 @@ func PrintNode(env *ast.Env, n ast.Node) string {
 		return "<h_lookup_def partial 1>"
 	case ast.HLookupDefPartialNode2:
 		return "<h_lookup_def partial 2>"
+	case ast.VecGetPartialNode:
+		return "<vec_get partial>"
+	case ast.VecSetPartialNode1:
+		return "<vec_set partial 1>"
+	case ast.VecSetPartialNode2:
+		return "<vec_set partial 2>"
+	case ast.VecNode:
+		var elms []string
+		for _, e := range node.Elems {
+			elms = append(elms, PrintNode(env, Whnf(env, e)))
+		}
+		return "vec [" + strings.Join(elms, ",") + "]"
 	case ast.LamNode:
 		return "\\" + node.Var + ". <closure>"
 	case ast.ClosureNode:
@@ -1649,6 +1762,14 @@ func DebugPrintNode(n ast.Node) string {
 		return "HLookupDef1"
 	case ast.HLookupDefPartialNode2:
 		return "HLookupDef2"
+	case ast.VecNode:
+		return fmt.Sprintf("Vec(%d)", len(node.Elems))
+	case ast.VecGetPartialNode:
+		return "VecGetPartial"
+	case ast.VecSetPartialNode1:
+		return "VecSetPartial1"
+	case ast.VecSetPartialNode2:
+		return "VecSetPartial2"
 	case ast.VarNode:
 		return fmt.Sprintf("Var(%s)", node.Name)
 	case ast.LocalVarNode:

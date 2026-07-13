@@ -12,6 +12,8 @@ var resolverBuiltins = map[string]bool{
 	"parse_ints": true, "list_get": true, "list_set": true, "memoize": true,
 	"sort_by": true, "sort_ints": true, "sort_edges": true, "sort_pts": true,
 	"h_lookup_def": true, "empty_map": true, "empty_set": true,
+	"to_vec": true, "vec_get": true, "vec_set": true, "vec_len": true,
+	"vec_to_list": true,
 }
 
 // Resolve rewrites variable references in a freshly desugared definition or

@@ -79,4 +79,10 @@ Profiling the implemented built-ins against AoC Day 8 showed that interpreter-co
 * **Deep-force robustness** ✅ partially (strict `foldl` + argument passthrough; iterative forcer still open)
   - *Requirement*: Forcing a long chain of dependent thunks (e.g. a 1 000 000-element lazy fold, or an accumulator threaded through a long loop) must not overflow the host stack. Achieved via strict library folds and passing variable arguments through without re-thunking; a fully iterative thunk forcer in the runtime remains open.
 
-*Complexity corrections to Sections 1–2*: as implemented, `list_get`/`list_set` convert the whole list per call (O(N), not O(1)) and `h_insert` copies the whole map per insert. True O(1)/O(log n) behaviour requires a first-class vector value and a structurally-shared persistent map — see Phases 9–10 of the implementation plan.
+*Complexity corrections to Sections 1–2 (✅ resolved by Phase 10)*: the original `list_get`/`list_set` convert the whole list per call (O(N), not O(1)) and the original `h_insert` copied the whole map per insert. Both are superseded: maps are now structurally-shared AVL trees with native integer keys (`h_insert` O(log n); 50 000 inserts in 422 ms where the copy-based map did not finish in 115 s), and the first-class vector type provides real O(1) reads:
+
+* **`to_vec`**: `[*] -> vec *` — materialises a list as a vector (elements stay lazy).
+* **`vec_get`**: `vec * -> num -> *` — O(1) indexed read.
+* **`vec_len`**: `vec * -> num` — O(1) length.
+* **`vec_set`**: `vec * -> num -> * -> vec *` — persistent update (O(n) copy of the element slice; the original vector is untouched).
+* **`vec_to_list`**: `vec * -> [*]` — back to a list.
