@@ -176,22 +176,24 @@ func matchPattern(env *ast.Env, pat ast.Pat, node ast.Node) ([]MatchBinding, boo
 }
 
 func getStringValue(env *ast.Env, node ast.Node) string {
-	var collect func(ast.Node, []rune) string
-	collect = func(current ast.Node, acc []rune) string {
-		switch l := Whnf(env, current).(type) {
+	var sb strings.Builder
+	curr := node
+	for {
+		switch l := Whnf(env, curr).(type) {
 		case ast.NilNode:
-			return string(acc)
+			return sb.String()
 		case ast.ConsNode:
 			hVal := Whnf(env, l.Head)
 			if c, ok := hVal.(ast.CharNode); ok {
-				return collect(l.Tail, append(acc, c.Val))
+				sb.WriteRune(c.Val)
+				curr = l.Tail
+				continue
 			}
 			panic(ast.RuntimeError{Msg: "Expected char in string"})
 		default:
 			panic(ast.RuntimeError{Msg: "Expected string"})
 		}
 	}
-	return collect(node, []rune{})
 }
 
 func getMapKey(env *ast.Env, node ast.Node) string {
@@ -351,7 +353,10 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 	if IsInterrupted() {
 		panic(InterruptedException{})
 	}
-	var pending []*ast.ThunkCell
+	// small inline buffer: most evaluations record only a few pending
+	// thunks, so the common case never touches the heap
+	var pbuf [8]*ast.ThunkCell
+	pending := pbuf[:0]
 	v := whnfCore(env, n, &pending)
 	for _, cell := range pending {
 		cell.Val = v
@@ -360,61 +365,183 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 	return v
 }
 
-// whnfCore reduces n to weak head normal form. An unevaluated thunk reached
-// in tail position is recorded in pending and its expression evaluation
-// continues in the same trampoline iteration instead of a nested recursive
-// call; Whnf writes the final value into every recorded cell. All cells on
-// the pending stack share the same WHNF by construction (each links to the
-// next in tail position), so chains of dependent thunks — lazy accumulators,
-// state threaded through where-bindings — no longer consume one Go stack
-// frame per link. A cell still in Evaluating state that is referenced again
-// therefore genuinely depends on its own value, and blackhole detection
-// keeps working.
+// whnfCore reduces n to weak head normal form on an explicit control
+// stack. An unevaluated thunk reached in tail position is recorded in
+// pending (Whnf writes the final value into cells left over at return);
+// strict operand positions push a continuation frame carrying a pending
+// watermark, so cells recorded during an operand's evaluation receive
+// exactly that operand's value. Neither chains of dependent thunks nor
+// strict-operand nesting consume Go stack frames; nested Whnf calls remain
+// only in bounded positions (builtin internals, range bounds, list diff,
+// structural equality of heads, pattern matching).
+// continuation kinds for whnfCore's explicit control stack: strict operand
+// positions push a continuation instead of making a nested recursive call,
+// so evaluation depth is bounded by the heap, not by the Go stack.
+const (
+	kIfCond = iota
+	kIfZeroCond
+	kIfNilCond
+	kBinopLeft
+	kBinopRight
+	kAppFun
+	kProjTuple
+	kAppendLeft
+)
+
+// cont is one frame of the explicit control stack. mark records the length
+// of the pending-thunk stack when the frame was pushed: thunk cells recorded
+// while evaluating this frame's operand sit above mark and receive exactly
+// that operand's value when it arrives. The node/val fields are stage
+// dependent: kBinopLeft holds the operator node and the unevaluated right
+// operand in val; kBinopRight holds the operator node and the evaluated left
+// operand in val; kIf* hold the conditional node; kAppFun holds the argument
+// expression; kAppendLeft holds the right list expression.
+type cont struct {
+	kind int
+	mark int
+	idx  int
+	node ast.Node
+	val  ast.Node
+	env  *ast.Env
+}
+
+// evalBinop applies a binary operator node to two evaluated operands.
+func evalBinop(env *ast.Env, op ast.Node, v1, v2 ast.Node) ast.Node {
+	switch op.(type) {
+	case ast.AddNode:
+		i1, ok1 := v1.(ast.IntNode)
+		i2, ok2 := v2.(ast.IntNode)
+		if !ok1 || !ok2 {
+			panic(ast.RuntimeError{Msg: "Addition expects integers"})
+		}
+		return ast.IntNode{Val: i1.Val + i2.Val}
+	case ast.SubNode:
+		i1, ok1 := v1.(ast.IntNode)
+		i2, ok2 := v2.(ast.IntNode)
+		if !ok1 || !ok2 {
+			panic(ast.RuntimeError{Msg: "Subtraction expects integers"})
+		}
+		return ast.IntNode{Val: i1.Val - i2.Val}
+	case ast.MulNode:
+		i1, ok1 := v1.(ast.IntNode)
+		i2, ok2 := v2.(ast.IntNode)
+		if !ok1 || !ok2 {
+			panic(ast.RuntimeError{Msg: "Multiplication expects integers"})
+		}
+		return ast.IntNode{Val: i1.Val * i2.Val}
+	case ast.DivNode:
+		i1, ok1 := v1.(ast.IntNode)
+		i2, ok2 := v2.(ast.IntNode)
+		if !ok1 || !ok2 {
+			panic(ast.RuntimeError{Msg: "Division expects integers"})
+		}
+		if i2.Val == 0 {
+			panic(ast.RuntimeError{Msg: "Division by zero"})
+		}
+		return ast.IntNode{Val: smlDiv(i1.Val, i2.Val)}
+	case ast.ModNode:
+		i1, ok1 := v1.(ast.IntNode)
+		i2, ok2 := v2.(ast.IntNode)
+		if !ok1 || !ok2 {
+			panic(ast.RuntimeError{Msg: "Modulo expects integers"})
+		}
+		if i2.Val == 0 {
+			panic(ast.RuntimeError{Msg: "Division by zero"})
+		}
+		return ast.IntNode{Val: smlMod(i1.Val, i2.Val)}
+	case ast.EqNode:
+		return ast.BoolNode{Val: eq(env, v1, v2)}
+	case ast.NeNode:
+		return ast.BoolNode{Val: !eq(env, v1, v2)}
+	case ast.LtNode:
+		i1, ok1 := v1.(ast.IntNode)
+		i2, ok2 := v2.(ast.IntNode)
+		if !ok1 || !ok2 {
+			panic(ast.RuntimeError{Msg: "Less-than expects integers"})
+		}
+		return ast.BoolNode{Val: i1.Val < i2.Val}
+	case ast.GtNode:
+		i1, ok1 := v1.(ast.IntNode)
+		i2, ok2 := v2.(ast.IntNode)
+		if !ok1 || !ok2 {
+			panic(ast.RuntimeError{Msg: "Greater-than expects integers"})
+		}
+		return ast.BoolNode{Val: i1.Val > i2.Val}
+	case ast.LeNode:
+		i1, ok1 := v1.(ast.IntNode)
+		i2, ok2 := v2.(ast.IntNode)
+		if !ok1 || !ok2 {
+			panic(ast.RuntimeError{Msg: "Less-than-or-equal expects integers"})
+		}
+		return ast.BoolNode{Val: i1.Val <= i2.Val}
+	case ast.GeNode:
+		i1, ok1 := v1.(ast.IntNode)
+		i2, ok2 := v2.(ast.IntNode)
+		if !ok1 || !ok2 {
+			panic(ast.RuntimeError{Msg: "Greater-than-or-equal expects integers"})
+		}
+		return ast.BoolNode{Val: i1.Val >= i2.Val}
+	}
+	panic(fmt.Sprintf("Internal error: unknown binary operator: %T", op))
+}
+
 func whnfCore(env *ast.Env, n ast.Node, pending *[]*ast.ThunkCell) ast.Node {
+	// small inline buffer: shallow expressions (the overwhelmingly common
+	// case for nested Whnf calls) never allocate a control stack
+	var cbuf [16]cont
+	conts := cbuf[:0]
+	steps := 0
+machine:
 	for {
+		steps++
+		if steps&4095 == 0 && IsInterrupted() {
+			panic(InterruptedException{})
+		}
+		var v ast.Node
+	dispatch:
 		switch node := n.(type) {
 		case ast.IntNode:
-			return node
+			v = node
 		case ast.BoolNode:
-			return node
+			v = node
 		case ast.CharNode:
-			return node
+			v = node
 		case ast.NilNode:
-			return node
+			v = node
 		case ast.MapNode:
-			return node
+			v = node
 		case ast.SetNode:
-			return node
+			v = node
 		case ast.HLookupPartialNode:
-			return node
+			v = node
 		case ast.HInsertPartialNode1:
-			return node
+			v = node
 		case ast.HInsertPartialNode2:
-			return node
+			v = node
 		case ast.MemberPartialNode:
-			return node
+			v = node
 		case ast.SeqPartialNode:
-			return node
+			v = node
 		case ast.SplitPartialNode:
-			return node
+			v = node
 		case ast.ListGetPartialNode:
-			return node
+			v = node
 		case ast.ListSetPartialNode1:
-			return node
+			v = node
 		case ast.ListSetPartialNode2:
-			return node
+			v = node
 		case ast.MemoizeNode:
-			return node
+			v = node
 		case ast.SortByPartialNode:
-			return node
+			v = node
 		case ast.HLookupDefPartialNode1:
-			return node
+			v = node
 		case ast.HLookupDefPartialNode2:
-			return node
+			v = node
 		case ast.LamNode:
-			return ast.ClosureNode{Var: node.Var, Body: node.Body, Env: env}
+			v = ast.ClosureNode{Var: node.Var, Body: node.Body, Env: env}
 		case ast.ClosureNode:
-			return node
+			v = node
 		case ast.LetNode:
 			envPrime := env
 			cells := make([]*ast.ThunkCell, len(node.Bindings))
@@ -437,7 +564,7 @@ func whnfCore(env *ast.Env, n ast.Node, pending *[]*ast.ThunkCell) ast.Node {
 			if needsThunkCons(t) {
 				t = ast.ThunkNode{Cell: &ast.ThunkCell{State: ast.Unevaluated, Expr: t, Env: env}}
 			}
-			return ast.ConsNode{Head: h, Tail: t}
+			v = ast.ConsNode{Head: h, Tail: t}
 		case ast.TupleNode:
 			elmsPrime := make([]ast.Node, len(node.Elems))
 			for i, e := range node.Elems {
@@ -447,7 +574,7 @@ func whnfCore(env *ast.Env, n ast.Node, pending *[]*ast.ThunkCell) ast.Node {
 					elmsPrime[i] = e
 				}
 			}
-			return ast.TupleNode{Elems: elmsPrime}
+			v = ast.TupleNode{Elems: elmsPrime}
 		case ast.LocalVarNode:
 			curr := env
 			for d := node.Depth; d > 0; d-- {
@@ -463,7 +590,8 @@ func whnfCore(env *ast.Env, n ast.Node, pending *[]*ast.ThunkCell) ast.Node {
 				case ast.Evaluated:
 					switch cv := cell.Val.(type) {
 					case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
-						return cv
+						v = cv
+						break dispatch
 					default:
 						n = cv
 						continue
@@ -498,11 +626,14 @@ func whnfCore(env *ast.Env, n ast.Node, pending *[]*ast.ThunkCell) ast.Node {
 			name := node.Name
 			switch name {
 			case "hd", "tl", "show", "read", "lines", "numval", "length", "reverse", "seq", "h_lookup", "h_insert", "member", "split", "parse_ints", "list_get", "list_set", "memoize", "sort_by", "sort_ints", "sort_edges", "sort_pts", "h_lookup_def":
-				return node
+				v = node
 			case "empty_map":
-				return ast.MapNode{Map: make(map[string]ast.Node)}
+				v = ast.MapNode{Map: make(map[string]ast.Node)}
 			case "empty_set":
-				return ast.SetNode{Set: make(map[string]bool)}
+				v = ast.SetNode{Set: make(map[string]bool)}
+			}
+			if v != nil {
+				break
 			}
 
 			var val ast.Node
@@ -538,7 +669,8 @@ func whnfCore(env *ast.Env, n ast.Node, pending *[]*ast.ThunkCell) ast.Node {
 				case ast.Evaluated:
 					switch cv := cell.Val.(type) {
 					case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
-						return cv
+						v = cv
+						break dispatch
 					default:
 						n = cv
 						continue
@@ -561,7 +693,8 @@ func whnfCore(env *ast.Env, n ast.Node, pending *[]*ast.ThunkCell) ast.Node {
 			case ast.Evaluated:
 				switch cv := cell.Val.(type) {
 				case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
-					return cv
+					v = cv
+					break dispatch
 				default:
 					n = cv
 					continue
@@ -576,63 +709,21 @@ func whnfCore(env *ast.Env, n ast.Node, pending *[]*ast.ThunkCell) ast.Node {
 				continue
 			}
 		case ast.IfNode:
-			condVal := Whnf(env, node.Cond)
-			if b, ok := condVal.(ast.BoolNode); ok {
-				if b.Val {
-					n = node.Then
-				} else {
-					n = node.Else
-				}
-				continue
-			}
-			if i, ok := condVal.(ast.IntNode); ok {
-				if i.Val != 0 {
-					n = node.Then
-				} else {
-					n = node.Else
-				}
-				continue
-			}
-			panic(ast.RuntimeError{Msg: fmt.Sprintf("If condition must be a boolean, got: %s", PrintNode(env, condVal))})
+			conts = append(conts, cont{kind: kIfCond, mark: len(*pending), node: node, env: env})
+			n = node.Cond
+			continue
 		case ast.IfZeroNode:
-			condVal := Whnf(env, node.Cond)
-			if i, ok := condVal.(ast.IntNode); ok {
-				if i.Val == 0 {
-					n = node.Then
-				} else {
-					n = node.Else
-				}
-				continue
-			}
-			panic(ast.RuntimeError{Msg: "Condition must resolve to an integer"})
+			conts = append(conts, cont{kind: kIfZeroCond, mark: len(*pending), node: node, env: env})
+			n = node.Cond
+			continue
 		case ast.IfNilNode:
-			condVal := Whnf(env, node.Cond)
-			switch condVal.(type) {
-			case ast.NilNode:
-				n = node.Then
-				continue
-			case ast.ConsNode:
-				n = node.Else
-				continue
-			default:
-				panic(ast.RuntimeError{Msg: "Condition must resolve to a list"})
-			}
+			conts = append(conts, cont{kind: kIfNilCond, mark: len(*pending), node: node, env: env})
+			n = node.Cond
+			continue
 		case ast.AppendNode:
-			e1Val := Whnf(env, node.Left)
-			switch l := e1Val.(type) {
-			case ast.NilNode:
-				n = node.Right
-				continue
-			case ast.ConsNode:
-				tPrime := ast.ThunkNode{Cell: &ast.ThunkCell{
-					State: ast.Unevaluated,
-					Expr:  ast.AppendNode{Left: l.Tail, Right: node.Right},
-					Env:   env,
-				}}
-				return ast.ConsNode{Head: l.Head, Tail: tPrime}
-			default:
-				panic(ast.RuntimeError{Msg: "Append expects lists"})
-			}
+			conts = append(conts, cont{kind: kAppendLeft, mark: len(*pending), node: node.Right, env: env})
+			n = node.Left
+			continue
 		case ast.ZFNode:
 			n = evalZF(env, node.Body, node.Quals)
 			continue
@@ -648,7 +739,8 @@ func whnfCore(env *ast.Env, n ast.Node, pending *[]*ast.ThunkCell) ast.Node {
 				panic(ast.RuntimeError{Msg: "Range bounds must evaluate to integers"})
 			}
 			if i1.Val > i2.Val {
-				return ast.NilNode{}
+				v = ast.NilNode{}
+				break
 			}
 			nextRange := ast.RangeNode{Start: ast.IntNode{Val: i1.Val + 1}, End: v2}
 			tPrime := ast.ThunkNode{Cell: &ast.ThunkCell{
@@ -656,140 +748,229 @@ func whnfCore(env *ast.Env, n ast.Node, pending *[]*ast.ThunkCell) ast.Node {
 				Expr:  nextRange,
 				Env:   env,
 			}}
-			return ast.ConsNode{Head: v1, Tail: tPrime}
+			v = ast.ConsNode{Head: v1, Tail: tPrime}
 		case ast.ProjNode:
-			tplVal := Whnf(env, node.Tuple)
-			if t, ok := tplVal.(ast.TupleNode); ok {
-				n = t.Elems[node.Index]
-				continue
-			}
-			panic(ast.RuntimeError{Msg: "Proj expects a tuple"})
+			conts = append(conts, cont{kind: kProjTuple, mark: len(*pending), idx: node.Index, env: env})
+			n = node.Tuple
+			continue
 		case ast.MatchErrorNode:
 			panic(ast.RuntimeError{Msg: "Pattern matching exhausted"})
 		case ast.AddNode:
-			v1 := Whnf(env, node.Left)
-			v2 := Whnf(env, node.Right)
-			i1, ok1 := v1.(ast.IntNode)
-			i2, ok2 := v2.(ast.IntNode)
-			if !ok1 || !ok2 {
-				panic(ast.RuntimeError{Msg: "Addition expects integers"})
-			}
-			return ast.IntNode{Val: i1.Val + i2.Val}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			n = node.Left
+			continue
 		case ast.SubNode:
-			v1 := Whnf(env, node.Left)
-			v2 := Whnf(env, node.Right)
-			i1, ok1 := v1.(ast.IntNode)
-			i2, ok2 := v2.(ast.IntNode)
-			if !ok1 || !ok2 {
-				panic(ast.RuntimeError{Msg: "Subtraction expects integers"})
-			}
-			return ast.IntNode{Val: i1.Val - i2.Val}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			n = node.Left
+			continue
 		case ast.MulNode:
-			v1 := Whnf(env, node.Left)
-			v2 := Whnf(env, node.Right)
-			i1, ok1 := v1.(ast.IntNode)
-			i2, ok2 := v2.(ast.IntNode)
-			if !ok1 || !ok2 {
-				panic(ast.RuntimeError{Msg: "Multiplication expects integers"})
-			}
-			return ast.IntNode{Val: i1.Val * i2.Val}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			n = node.Left
+			continue
 		case ast.DivNode:
-			v1 := Whnf(env, node.Left)
-			v2 := Whnf(env, node.Right)
-			i1, ok1 := v1.(ast.IntNode)
-			i2, ok2 := v2.(ast.IntNode)
-			if !ok1 || !ok2 {
-				panic(ast.RuntimeError{Msg: "Division expects integers"})
-			}
-			if i2.Val == 0 {
-				panic(ast.RuntimeError{Msg: "Division by zero"})
-			}
-			return ast.IntNode{Val: smlDiv(i1.Val, i2.Val)}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			n = node.Left
+			continue
 		case ast.ModNode:
-			v1 := Whnf(env, node.Left)
-			v2 := Whnf(env, node.Right)
-			i1, ok1 := v1.(ast.IntNode)
-			i2, ok2 := v2.(ast.IntNode)
-			if !ok1 || !ok2 {
-				panic(ast.RuntimeError{Msg: "Modulo expects integers"})
-			}
-			if i2.Val == 0 {
-				panic(ast.RuntimeError{Msg: "Division by zero"})
-			}
-			return ast.IntNode{Val: smlMod(i1.Val, i2.Val)}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			n = node.Left
+			continue
 		case ast.EqNode:
-			v1 := Whnf(env, node.Left)
-			v2 := Whnf(env, node.Right)
-			return ast.BoolNode{Val: eq(env, v1, v2)}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			n = node.Left
+			continue
 		case ast.NeNode:
-			v1 := Whnf(env, node.Left)
-			v2 := Whnf(env, node.Right)
-			return ast.BoolNode{Val: !eq(env, v1, v2)}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			n = node.Left
+			continue
 		case ast.LtNode:
-			v1 := Whnf(env, node.Left)
-			v2 := Whnf(env, node.Right)
-			i1, ok1 := v1.(ast.IntNode)
-			i2, ok2 := v2.(ast.IntNode)
-			if !ok1 || !ok2 {
-				panic(ast.RuntimeError{Msg: "Less-than expects integers"})
-			}
-			return ast.BoolNode{Val: i1.Val < i2.Val}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			n = node.Left
+			continue
 		case ast.GtNode:
-			v1 := Whnf(env, node.Left)
-			v2 := Whnf(env, node.Right)
-			i1, ok1 := v1.(ast.IntNode)
-			i2, ok2 := v2.(ast.IntNode)
-			if !ok1 || !ok2 {
-				panic(ast.RuntimeError{Msg: "Greater-than expects integers"})
-			}
-			return ast.BoolNode{Val: i1.Val > i2.Val}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			n = node.Left
+			continue
 		case ast.LeNode:
-			v1 := Whnf(env, node.Left)
-			v2 := Whnf(env, node.Right)
-			i1, ok1 := v1.(ast.IntNode)
-			i2, ok2 := v2.(ast.IntNode)
-			if !ok1 || !ok2 {
-				panic(ast.RuntimeError{Msg: "Less-than-or-equal expects integers"})
-			}
-			return ast.BoolNode{Val: i1.Val <= i2.Val}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			n = node.Left
+			continue
 		case ast.GeNode:
-			v1 := Whnf(env, node.Left)
-			v2 := Whnf(env, node.Right)
-			i1, ok1 := v1.(ast.IntNode)
-			i2, ok2 := v2.(ast.IntNode)
-			if !ok1 || !ok2 {
-				panic(ast.RuntimeError{Msg: "Greater-than-or-equal expects integers"})
-			}
-			return ast.BoolNode{Val: i1.Val >= i2.Val}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: node, val: node.Right, env: env})
+			n = node.Left
+			continue
 		case ast.DiffNode:
 			xs := Whnf(env, node.Left)
 			ys := Whnf(env, node.Right)
 			n = diff(env, xs, ys)
 			continue
 		case ast.AppNode:
-			fVal := Whnf(env, node.Left)
-			switch f := fVal.(type) {
-			case ast.ClosureNode:
-				env = f.Env.Extend(f.Var, bindArg(env, node.Right))
-				n = f.Body
-				continue
-			case ast.LamNode:
-				env = env.Extend(f.Var, bindArg(env, node.Right))
-				n = f.Body
-				continue
+			// fast paths for the common callee shapes skip the continuation
+			switch lf := node.Left.(type) {
 			case ast.VarNode:
-				n = applyBuiltin(env, f.Name, node)
-				continue
-			default:
-				res := applyPartial(env, fVal, node)
-				if res == nil {
-					panic(ast.RuntimeError{Msg: "Non-functional application"})
+				if lf.Name != "empty_map" && lf.Name != "empty_set" && resolverBuiltins[lf.Name] {
+					n = applyBuiltin(env, lf.Name, node)
+					continue
 				}
-				n = res
+			case ast.LamNode:
+				argVal := bindArg(env, node.Right)
+				env = env.Extend(lf.Var, argVal)
+				n = lf.Body
 				continue
+			case ast.ClosureNode:
+				argVal := bindArg(env, node.Right)
+				env = lf.Env.Extend(lf.Var, argVal)
+				n = lf.Body
+				continue
+			case ast.GlobalVarNode:
+				if gv, gok := env.Globals[lf.Name]; gok {
+					if lam, isLam := gv.(ast.LamNode); isLam {
+						root := env.Root
+						if root == nil {
+							root = &ast.Env{Globals: env.Globals}
+						}
+						argVal := bindArg(env, node.Right)
+						env = root.Extend(lam.Var, argVal)
+						n = lam.Body
+						continue
+					}
+				}
+			case ast.LocalVarNode:
+				curr := env
+				for d := lf.Depth; d > 0 && curr != nil; d-- {
+					curr = curr.Parent
+				}
+				if curr != nil {
+					cv := curr.Val
+					if th, isTh := cv.(ast.ThunkNode); isTh && th.Cell.State == ast.Evaluated {
+						cv = th.Cell.Val
+					}
+					if cl, isCl := cv.(ast.ClosureNode); isCl {
+						argVal := bindArg(env, node.Right)
+						env = cl.Env.Extend(cl.Var, argVal)
+						n = cl.Body
+						continue
+					}
+				}
+			}
+			conts = append(conts, cont{kind: kAppFun, mark: len(*pending), node: node.Right, env: env})
+			n = node.Left
+			continue
+		default:
+			panic(fmt.Sprintf("Internal error: unhandled node type in whnf: %T", n))
+		}
+
+		// a value was produced: give it to the pending thunks recorded for
+		// this operand, then resume the innermost continuation
+		for {
+			if len(conts) == 0 {
+				return v
+			}
+			k := conts[len(conts)-1]
+			conts = conts[:len(conts)-1]
+			for _, cell := range (*pending)[k.mark:] {
+				cell.Val = v
+				cell.State = ast.Evaluated
+			}
+			*pending = (*pending)[:k.mark]
+			switch k.kind {
+			case kIfCond:
+				ifn := k.node.(ast.IfNode)
+				if b, ok := v.(ast.BoolNode); ok {
+					if b.Val {
+						n = ifn.Then
+					} else {
+						n = ifn.Else
+					}
+				} else if i, ok := v.(ast.IntNode); ok {
+					if i.Val != 0 {
+						n = ifn.Then
+					} else {
+						n = ifn.Else
+					}
+				} else {
+					panic(ast.RuntimeError{Msg: fmt.Sprintf("If condition must be a boolean, got: %s", PrintNode(k.env, v))})
+				}
+				env = k.env
+				continue machine
+			case kIfZeroCond:
+				ifn := k.node.(ast.IfZeroNode)
+				i, ok := v.(ast.IntNode)
+				if !ok {
+					panic(ast.RuntimeError{Msg: "Condition must resolve to an integer"})
+				}
+				if i.Val == 0 {
+					n = ifn.Then
+				} else {
+					n = ifn.Else
+				}
+				env = k.env
+				continue machine
+			case kIfNilCond:
+				ifn := k.node.(ast.IfNilNode)
+				switch v.(type) {
+				case ast.NilNode:
+					n = ifn.Then
+				case ast.ConsNode:
+					n = ifn.Else
+				default:
+					panic(ast.RuntimeError{Msg: "Condition must resolve to a list"})
+				}
+				env = k.env
+				continue machine
+			case kBinopLeft:
+				right := k.val
+				conts = append(conts, cont{kind: kBinopRight, mark: len(*pending), node: k.node, val: v, env: k.env})
+				n = right
+				env = k.env
+				continue machine
+			case kBinopRight:
+				v = evalBinop(k.env, k.node, k.val, v)
+			case kAppFun:
+				switch f := v.(type) {
+				case ast.ClosureNode:
+					env = f.Env.Extend(f.Var, bindArg(k.env, k.node))
+					n = f.Body
+				case ast.LamNode:
+					env = k.env.Extend(f.Var, bindArg(k.env, k.node))
+					n = f.Body
+				case ast.VarNode:
+					n = applyBuiltin(k.env, f.Name, ast.AppNode{Left: f, Right: k.node})
+					env = k.env
+				default:
+					res := applyPartial(k.env, v, ast.AppNode{Left: v, Right: k.node})
+					if res == nil {
+						panic(ast.RuntimeError{Msg: "Non-functional application"})
+					}
+					n = res
+					env = k.env
+				}
+				continue machine
+			case kProjTuple:
+				t, ok := v.(ast.TupleNode)
+				if !ok {
+					panic(ast.RuntimeError{Msg: "Proj expects a tuple"})
+				}
+				n = t.Elems[k.idx]
+				env = k.env
+				continue machine
+			case kAppendLeft:
+				switch l := v.(type) {
+				case ast.NilNode:
+					n = k.node
+					env = k.env
+					continue machine
+				case ast.ConsNode:
+					v = ast.ConsNode{Head: l.Head, Tail: ast.ThunkNode{Cell: &ast.ThunkCell{
+						State: ast.Unevaluated,
+						Expr:  ast.AppendNode{Left: l.Tail, Right: k.node},
+						Env:   k.env,
+					}}}
+				default:
+					panic(ast.RuntimeError{Msg: "Append expects lists"})
+				}
 			}
 		}
-		panic(fmt.Sprintf("Internal error: unhandled node type in whnf: %T", n))
 	}
 }
 
