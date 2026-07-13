@@ -285,61 +285,84 @@ func isTrueNode(n ast.Node) bool {
 }
 
 func eq(env *ast.Env, v1, v2 ast.Node) bool {
-	switch x1 := v1.(type) {
-	case ast.IntNode:
-		if x2, ok := v2.(ast.IntNode); ok {
-			return x1.Val == x2.Val
-		}
-	case ast.BoolNode:
-		if x2, ok := v2.(ast.BoolNode); ok {
-			return x1.Val == x2.Val
-		}
-	case ast.CharNode:
-		if x2, ok := v2.(ast.CharNode); ok {
-			return x1.Val == x2.Val
-		}
-	case ast.NilNode:
-		switch v2.(type) {
-		case ast.NilNode:
-			return true
-		case ast.ConsNode:
-			return false
-		}
-	case ast.ConsNode:
-		switch x2 := v2.(type) {
-		case ast.NilNode:
-			return false
-		case ast.ConsNode:
-			eqH := Whnf(env, ast.EqNode{Left: x1.Head, Right: x2.Head})
-			if isTrueNode(eqH) {
-				eqT := Whnf(env, ast.EqNode{Left: x1.Tail, Right: x2.Tail})
-				if isTrueNode(eqT) {
-					return true
-				}
+	for {
+		switch x1 := v1.(type) {
+		case ast.IntNode:
+			if x2, ok := v2.(ast.IntNode); ok {
+				return x1.Val == x2.Val
 			}
-			return false
-		}
-	case ast.TupleNode:
-		if x2, ok := v2.(ast.TupleNode); ok {
-			if len(x1.Elems) != len(x2.Elems) {
+		case ast.BoolNode:
+			if x2, ok := v2.(ast.BoolNode); ok {
+				return x1.Val == x2.Val
+			}
+		case ast.CharNode:
+			if x2, ok := v2.(ast.CharNode); ok {
+				return x1.Val == x2.Val
+			}
+		case ast.NilNode:
+			switch v2.(type) {
+			case ast.NilNode:
+				return true
+			case ast.ConsNode:
 				return false
 			}
-			for i := range x1.Elems {
-				eqE := Whnf(env, ast.EqNode{Left: x1.Elems[i], Right: x2.Elems[i]})
-				if !isTrueNode(eqE) {
+		case ast.ConsNode:
+			switch x2 := v2.(type) {
+			case ast.NilNode:
+				return false
+			case ast.ConsNode:
+				eqH := Whnf(env, ast.EqNode{Left: x1.Head, Right: x2.Head})
+				if !isTrueNode(eqH) {
 					return false
 				}
+				// walk the tails iteratively so comparing long lists
+				// does not consume one Go stack frame per element
+				v1 = Whnf(env, x1.Tail)
+				v2 = Whnf(env, x2.Tail)
+				continue
 			}
-			return true
+		case ast.TupleNode:
+			if x2, ok := v2.(ast.TupleNode); ok {
+				if len(x1.Elems) != len(x2.Elems) {
+					return false
+				}
+				for i := range x1.Elems {
+					eqE := Whnf(env, ast.EqNode{Left: x1.Elems[i], Right: x2.Elems[i]})
+					if !isTrueNode(eqE) {
+						return false
+					}
+				}
+				return true
+			}
 		}
+		panic(ast.RuntimeError{Msg: fmt.Sprintf("Equality expects integers, booleans, characters, lists or tuples, got: %s and %s", PrintNode(env, v1), PrintNode(env, v2))})
 	}
-	panic(ast.RuntimeError{Msg: fmt.Sprintf("Equality expects integers, booleans, characters, lists or tuples, got: %s and %s", PrintNode(env, v1), PrintNode(env, v2))})
 }
 
 func Whnf(env *ast.Env, n ast.Node) ast.Node {
 	if IsInterrupted() {
 		panic(InterruptedException{})
 	}
+	var pending []*ast.ThunkCell
+	v := whnfCore(env, n, &pending)
+	for _, cell := range pending {
+		cell.Val = v
+		cell.State = ast.Evaluated
+	}
+	return v
+}
+
+// whnfCore reduces n to weak head normal form. An unevaluated thunk reached
+// in tail position is recorded in pending and its expression evaluation
+// continues in the same trampoline iteration instead of a nested recursive
+// call; Whnf writes the final value into every recorded cell. All cells on
+// the pending stack share the same WHNF by construction (each links to the
+// next in tail position), so chains of dependent thunks — lazy accumulators,
+// state threaded through where-bindings — no longer consume one Go stack
+// frame per link. A cell still in Evaluating state that is referenced again
+// therefore genuinely depends on its own value, and blackhole detection
+// keeps working.
+func whnfCore(env *ast.Env, n ast.Node, pending *[]*ast.ThunkCell) ast.Node {
 	for {
 		switch node := n.(type) {
 		case ast.IntNode:
@@ -466,16 +489,10 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 					panic(ast.BlackholeError{Msg: "Infinite loop on identifier: " + name})
 				case ast.Unevaluated:
 					cell.State = ast.Evaluating
-					res := Whnf(cell.Env, cell.Expr)
-					cell.State = ast.Evaluated
-					cell.Val = res
-					switch cv := res.(type) {
-					case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
-						return cv
-					default:
-						n = cv
-						continue
-					}
+					*pending = append(*pending, cell)
+					n = cell.Expr
+					env = cell.Env
+					continue
 				}
 			}
 			n = val
@@ -495,16 +512,10 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 				panic(ast.BlackholeError{Msg: "Infinite loop inside generic thunk node"})
 			case ast.Unevaluated:
 				cell.State = ast.Evaluating
-				res := Whnf(cell.Env, cell.Expr)
-				cell.State = ast.Evaluated
-				cell.Val = res
-				switch cv := res.(type) {
-				case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
-					return cv
-				default:
-					n = cv
-					continue
-				}
+				*pending = append(*pending, cell)
+				n = cell.Expr
+				env = cell.Env
+				continue
 			}
 		case ast.IfNode:
 			condVal := Whnf(env, node.Cond)
@@ -568,34 +579,8 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 			n = evalZF(env, node.Body, node.Quals)
 			continue
 		case ast.ZFGeneratorNode:
-			srcVal := Whnf(node.ZFEnv, node.Src)
-			switch s := srcVal.(type) {
-			case ast.NilNode:
-				return ast.NilNode{}
-			case ast.ConsNode:
-				matchRes, matchOk := matchPattern(node.ZFEnv, node.Pat, s.Head)
-				nextGen := ast.ZFGeneratorNode{
-					Pat:   node.Pat,
-					Rest:  node.Rest,
-					Src:   s.Tail,
-					Body:  node.Body,
-					ZFEnv: node.ZFEnv,
-				}
-				if matchOk {
-					extendedEnv := node.ZFEnv
-					for _, b := range matchRes {
-						extendedEnv = extendedEnv.Extend(b.Name, b.Val)
-					}
-					firstList := evalZF(extendedEnv, node.Body, node.Rest)
-					n = ast.AppendNode{Left: firstList, Right: nextGen}
-					continue
-				} else {
-					n = nextGen
-					continue
-				}
-			default:
-				panic(ast.RuntimeError{Msg: "Generator source must be a list"})
-			}
+			n = stepZFGenerator(node)
+			continue
 		case ast.RangeNode:
 			v1 := Whnf(env, node.Start)
 			v2 := Whnf(env, node.End)
@@ -726,401 +711,6 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 		case ast.AppNode:
 			fVal := Whnf(env, node.Left)
 			switch f := fVal.(type) {
-			case ast.HLookupPartialNode:
-				key := getMapKey(env, node.Right)
-				val, ok := f.Map[key]
-				if !ok {
-					panic(ast.RuntimeError{Msg: "h_lookup: key not found: " + key})
-				}
-				return val
-			case ast.HInsertPartialNode1:
-				key := getMapKey(env, node.Right)
-				return ast.HInsertPartialNode2{Map: f.Map, Key: key}
-			case ast.HInsertPartialNode2:
-				val := Whnf(env, node.Right)
-				newMap := make(map[string]ast.Node, len(f.Map)+1)
-				for k, v := range f.Map {
-					newMap[k] = v
-				}
-				newMap[f.Key] = val
-				return ast.MapNode{Map: newMap}
-			case ast.MemberPartialNode:
-				key := getMapKey(env, node.Right)
-				_, ok := f.Set[key]
-				return ast.BoolNode{Val: ok}
-			case ast.SeqPartialNode:
-				n = node.Right
-				continue
-			case ast.SplitPartialNode:
-				s := getStringValue(env, node.Right)
-				var res []string
-				var current strings.Builder
-				delims := f.Delims
-				for _, r := range s {
-					isDelim := false
-					for _, d := range delims {
-						if r == d {
-							isDelim = true
-							break
-						}
-					}
-					if isDelim {
-						if current.Len() > 0 {
-							res = append(res, current.String())
-							current.Reset()
-						}
-					} else {
-						current.WriteRune(r)
-					}
-				}
-				if current.Len() > 0 {
-					res = append(res, current.String())
-				}
-				var listNode ast.Node = ast.NilNode{}
-				for i := len(res) - 1; i >= 0; i-- {
-					listNode = ast.ConsNode{Head: MakeStringNode(res[i]), Tail: listNode}
-				}
-				return listNode
-			case ast.ListGetPartialNode:
-				idxVal := Whnf(env, node.Right)
-				idx := idxVal.(ast.IntNode).Val
-				if idx < 0 || idx >= int64(len(f.List)) {
-					panic(ast.RuntimeError{Msg: fmt.Sprintf("list_get: index out of bounds: %d (size %d)", idx, len(f.List))})
-				}
-				return ast.IntNode{Val: f.List[idx]}
-			case ast.ListSetPartialNode1:
-				idxVal := Whnf(env, node.Right)
-				idx := idxVal.(ast.IntNode).Val
-				return ast.ListSetPartialNode2{List: f.List, Index: idx}
-			case ast.ListSetPartialNode2:
-				valNode := Whnf(env, node.Right)
-				val := valNode.(ast.IntNode).Val
-				idx := f.Index
-				if idx < 0 || idx >= int64(len(f.List)) {
-					panic(ast.RuntimeError{Msg: fmt.Sprintf("list_set: index out of bounds: %d (size %d)", idx, len(f.List))})
-				}
-				newList := make([]int64, len(f.List))
-				copy(newList, f.List)
-				newList[idx] = val
-				var listNode ast.Node = ast.NilNode{}
-				for i := len(newList) - 1; i >= 0; i-- {
-					listNode = ast.ConsNode{Head: ast.IntNode{Val: newList[i]}, Tail: listNode}
-				}
-				return listNode
-			case ast.MemoizeNode:
-				argVal := Whnf(env, node.Right)
-				key := PrintNode(env, argVal)
-				if val, ok := f.Cache[key]; ok {
-					return val
-				}
-				res := Whnf(env, ast.AppNode{Left: f.Func, Right: argVal})
-				f.Cache[key] = res
-				return res
-			case ast.SortByPartialNode:
-				listVal := Whnf(env, node.Right)
-				var elems []ast.Node
-				curr := listVal
-				for {
-					lVal := Whnf(env, curr)
-					if cons, ok := lVal.(ast.ConsNode); ok {
-						elems = append(elems, cons.Head)
-						curr = cons.Tail
-					} else if _, ok := lVal.(ast.NilNode); ok {
-						break
-					} else {
-						panic(ast.RuntimeError{Msg: "sort_by expects a list"})
-					}
-				}
-				var sortErr error
-				slices.SortFunc(elems, func(a, b ast.Node) int {
-					if sortErr != nil {
-						return 0
-					}
-					res1 := Whnf(env, ast.AppNode{Left: f.Cmp, Right: a})
-					res2 := Whnf(env, ast.AppNode{Left: res1, Right: b})
-					if i, ok := res2.(ast.IntNode); ok {
-						return int(i.Val)
-					}
-					sortErr = fmt.Errorf("sort_by: comparison function did not return an integer")
-					return 0
-				})
-				if sortErr != nil {
-					panic(ast.RuntimeError{Msg: sortErr.Error()})
-				}
-				var listNode ast.Node = ast.NilNode{}
-				for i := len(elems) - 1; i >= 0; i-- {
-					listNode = ast.ConsNode{Head: elems[i], Tail: listNode}
-				}
-				return listNode
-			case ast.HLookupDefPartialNode1:
-				key := getMapKey(env, node.Right)
-				return ast.HLookupDefPartialNode2{Map: f.Map, Key: key}
-			case ast.HLookupDefPartialNode2:
-				valNode := Whnf(env, node.Right)
-				val, ok := f.Map[f.Key]
-				if !ok {
-					return valNode
-				}
-				return val
-			case ast.VarNode:
-				switch f.Name {
-				case "hd":
-					e2Val := Whnf(env, node.Right)
-					if c, ok := e2Val.(ast.ConsNode); ok {
-						n = c.Head
-						continue
-					}
-					if _, ok := e2Val.(ast.NilNode); ok {
-						panic(ast.RuntimeError{Msg: "hd applied to empty list"})
-					}
-					panic(ast.RuntimeError{Msg: "hd expects a list"})
-				case "tl":
-					e2Val := Whnf(env, node.Right)
-					if c, ok := e2Val.(ast.ConsNode); ok {
-						n = c.Tail
-						continue
-					}
-					if _, ok := e2Val.(ast.NilNode); ok {
-						panic(ast.RuntimeError{Msg: "tl applied to empty list"})
-					}
-					panic(ast.RuntimeError{Msg: "tl expects a list"})
-				case "read":
-					filename := getStringValue(env, node.Right)
-					content, err := os.ReadFile(filename)
-					if err != nil {
-						panic(ast.RuntimeError{Msg: fmt.Sprintf("Failed to read file: %s", filename)})
-					}
-					return MakeStringNode(string(content))
-				case "lines":
-					content := getStringValue(env, node.Right)
-					strList := splitLines(content)
-					var listNode ast.Node = ast.NilNode{}
-					for i := len(strList) - 1; i >= 0; i-- {
-						listNode = ast.ConsNode{Head: MakeStringNode(strList[i]), Tail: listNode}
-					}
-					return listNode
-				case "numval":
-					s := getStringValue(env, node.Right)
-					sTrimmed := strings.Map(func(r rune) rune {
-						if unicode.IsSpace(r) {
-							return -1
-						}
-						return r
-					}, s)
-					v, err := strconv.ParseInt(sTrimmed, 10, 64)
-					if err != nil {
-						panic(ast.RuntimeError{Msg: "numval: invalid integer: " + s})
-					}
-					return ast.IntNode{Val: v}
-				case "show":
-					evaluatedNode := Whnf(env, node.Right)
-					s := PrintNode(env, evaluatedNode)
-					return MakeStringNode(s)
-				case "length":
-					var length int64 = 0
-					curr := node.Right
-					for {
-						lVal := Whnf(env, curr)
-						if cons, ok := lVal.(ast.ConsNode); ok {
-							length++
-							curr = cons.Tail
-						} else if _, ok := lVal.(ast.NilNode); ok {
-							break
-						} else {
-							panic(ast.RuntimeError{Msg: "length expects a list"})
-						}
-					}
-					return ast.IntNode{Val: length}
-				case "seq":
-					Whnf(env, node.Right)
-					return ast.SeqPartialNode{}
-				case "reverse":
-					var reversed ast.Node = ast.NilNode{}
-					curr := node.Right
-					for {
-						lVal := Whnf(env, curr)
-						if cons, ok := lVal.(ast.ConsNode); ok {
-							reversed = ast.ConsNode{Head: cons.Head, Tail: reversed}
-							curr = cons.Tail
-						} else if _, ok := lVal.(ast.NilNode); ok {
-							break
-						} else {
-							panic(ast.RuntimeError{Msg: "reverse expects a list"})
-						}
-					}
-					return reversed
-				case "h_lookup":
-					mapVal := Whnf(env, node.Right)
-					mNode, ok := mapVal.(ast.MapNode)
-					if !ok {
-						panic(ast.RuntimeError{Msg: "h_lookup: expected map as first argument"})
-					}
-					return ast.HLookupPartialNode{Map: mNode.Map}
-				case "h_insert":
-					mapVal := Whnf(env, node.Right)
-					mNode, ok := mapVal.(ast.MapNode)
-					if !ok {
-						panic(ast.RuntimeError{Msg: "h_insert: expected map as first argument"})
-					}
-					return ast.HInsertPartialNode1{Map: mNode.Map}
-				case "member":
-					setVal := Whnf(env, node.Right)
-					sNode, ok := setVal.(ast.SetNode)
-					if !ok {
-						panic(ast.RuntimeError{Msg: "member: expected set as first argument"})
-					}
-					return ast.MemberPartialNode{Set: sNode.Set}
-				case "split":
-					delims := getStringValue(env, node.Right)
-					return ast.SplitPartialNode{Delims: delims}
-				case "parse_ints":
-					s := getStringValue(env, node.Right)
-					var res []int64
-					var current strings.Builder
-					for _, r := range s {
-						if (r >= '0' && r <= '9') || r == '-' {
-							current.WriteRune(r)
-						} else {
-							if current.Len() > 0 {
-								str := current.String()
-								if str != "-" {
-									val, err := strconv.ParseInt(str, 10, 64)
-									if err == nil {
-										res = append(res, val)
-									}
-								}
-								current.Reset()
-							}
-						}
-					}
-					if current.Len() > 0 {
-						str := current.String()
-						if str != "-" {
-							val, err := strconv.ParseInt(str, 10, 64)
-							if err == nil {
-								res = append(res, val)
-							}
-						}
-					}
-					var listNode ast.Node = ast.NilNode{}
-					for i := len(res) - 1; i >= 0; i-- {
-						listNode = ast.ConsNode{Head: ast.IntNode{Val: res[i]}, Tail: listNode}
-					}
-					return listNode
-				case "list_get":
-					listVal := Whnf(env, node.Right)
-					slice := getIntSlice(env, listVal)
-					return ast.ListGetPartialNode{List: slice}
-				case "list_set":
-					listVal := Whnf(env, node.Right)
-					slice := getIntSlice(env, listVal)
-					return ast.ListSetPartialNode1{List: slice}
-				case "memoize":
-					fn := Whnf(env, node.Right)
-					return ast.MemoizeNode{Func: fn, Cache: make(map[string]ast.Node)}
-				case "sort_ints":
-					listVal := Whnf(env, node.Right)
-					var elems []int64
-					curr := listVal
-					for {
-						lVal := Whnf(env, curr)
-						if cons, ok := lVal.(ast.ConsNode); ok {
-							val := Whnf(env, cons.Head).(ast.IntNode).Val
-							elems = append(elems, val)
-							curr = cons.Tail
-						} else if _, ok := lVal.(ast.NilNode); ok {
-							break
-						} else {
-							panic(ast.RuntimeError{Msg: "sort_ints expects a list of integers"})
-						}
-					}
-					slices.Sort(elems)
-					var listNode ast.Node = ast.NilNode{}
-					for i := len(elems) - 1; i >= 0; i-- {
-						listNode = ast.ConsNode{Head: ast.IntNode{Val: elems[i]}, Tail: listNode}
-					}
-					return listNode
-				case "sort_edges":
-					listVal := Whnf(env, node.Right)
-					var elems []ast.Node
-					curr := listVal
-					for {
-						lVal := Whnf(env, curr)
-						if cons, ok := lVal.(ast.ConsNode); ok {
-							elems = append(elems, cons.Head)
-							curr = cons.Tail
-						} else if _, ok := lVal.(ast.NilNode); ok {
-							break
-						} else {
-							panic(ast.RuntimeError{Msg: "sort_edges expects a list"})
-						}
-					}
-					slices.SortFunc(elems, func(a, b ast.Node) int {
-						aT := Whnf(env, a).(ast.TupleNode)
-						bT := Whnf(env, b).(ast.TupleNode)
-						d1 := Whnf(env, aT.Elems[2]).(ast.IntNode).Val
-						d2 := Whnf(env, bT.Elems[2]).(ast.IntNode).Val
-						if d1 < d2 {
-							return -1
-						}
-						if d1 > d2 {
-							return 1
-						}
-						return 0
-					})
-					var listNode ast.Node = ast.NilNode{}
-					for i := len(elems) - 1; i >= 0; i-- {
-						listNode = ast.ConsNode{Head: elems[i], Tail: listNode}
-					}
-					return listNode
-				case "sort_pts":
-					listVal := Whnf(env, node.Right)
-					var elems []ast.Node
-					curr := listVal
-					for {
-						lVal := Whnf(env, curr)
-						if cons, ok := lVal.(ast.ConsNode); ok {
-							elems = append(elems, cons.Head)
-							curr = cons.Tail
-						} else if _, ok := lVal.(ast.NilNode); ok {
-							break
-						} else {
-							panic(ast.RuntimeError{Msg: "sort_pts expects a list"})
-						}
-					}
-					slices.SortFunc(elems, func(a, b ast.Node) int {
-						aT := Whnf(env, a).(ast.TupleNode)
-						bT := Whnf(env, b).(ast.TupleNode)
-						aCoords := Whnf(env, aT.Elems[1]).(ast.TupleNode)
-						bCoords := Whnf(env, bT.Elems[1]).(ast.TupleNode)
-						x1 := Whnf(env, aCoords.Elems[0]).(ast.IntNode).Val
-						x2 := Whnf(env, bCoords.Elems[0]).(ast.IntNode).Val
-						if x1 < x2 {
-							return -1
-						}
-						if x1 > x2 {
-							return 1
-						}
-						return 0
-					})
-					var listNode ast.Node = ast.NilNode{}
-					for i := len(elems) - 1; i >= 0; i-- {
-						listNode = ast.ConsNode{Head: elems[i], Tail: listNode}
-					}
-					return listNode
-				case "sort_by":
-					cmpNode := Whnf(env, node.Right)
-					return ast.SortByPartialNode{Cmp: cmpNode}
-				case "h_lookup_def":
-					mapVal := Whnf(env, node.Right)
-					mNode, ok := mapVal.(ast.MapNode)
-					if !ok {
-						panic(ast.RuntimeError{Msg: "h_lookup_def: expected map as first argument"})
-					}
-					return ast.HLookupDefPartialNode1{Map: mNode.Map}
-				default:
-					panic(ast.RuntimeError{Msg: "Unbound variable: " + f.Name})
-				}
 			case ast.ClosureNode:
 				env = f.Env.Extend(f.Var, bindArg(env, node.Right))
 				n = f.Body
@@ -1129,11 +719,458 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 				env = env.Extend(f.Var, bindArg(env, node.Right))
 				n = f.Body
 				continue
+			case ast.VarNode:
+				n = applyBuiltin(env, f.Name, node)
+				continue
 			default:
-				panic(ast.RuntimeError{Msg: "Non-functional application"})
+				res := applyPartial(env, fVal, node)
+				if res == nil {
+					panic(ast.RuntimeError{Msg: "Non-functional application"})
+				}
+				n = res
+				continue
 			}
 		}
 		panic(fmt.Sprintf("Internal error: unhandled node type in whnf: %T", n))
+	}
+}
+
+// stepZFGenerator advances a list-comprehension generator by one source
+// element and returns the node the trampoline should evaluate next.
+func stepZFGenerator(node ast.ZFGeneratorNode) ast.Node {
+	srcVal := Whnf(node.ZFEnv, node.Src)
+	switch s := srcVal.(type) {
+	case ast.NilNode:
+		return ast.NilNode{}
+	case ast.ConsNode:
+		matchRes, matchOk := matchPattern(node.ZFEnv, node.Pat, s.Head)
+		nextGen := ast.ZFGeneratorNode{
+			Pat:   node.Pat,
+			Rest:  node.Rest,
+			Src:   s.Tail,
+			Body:  node.Body,
+			ZFEnv: node.ZFEnv,
+		}
+		if !matchOk {
+			return nextGen
+		}
+		extendedEnv := node.ZFEnv
+		for _, b := range matchRes {
+			extendedEnv = extendedEnv.Extend(b.Name, b.Val)
+		}
+		firstList := evalZF(extendedEnv, node.Body, node.Rest)
+		return ast.AppendNode{Left: firstList, Right: nextGen}
+	default:
+		panic(ast.RuntimeError{Msg: "Generator source must be a list"})
+	}
+}
+
+// applyPartial applies a curried builtin partial-application value to the
+// argument of node. It lives outside whnfCore so its bulky locals do not
+// enlarge the recursive evaluation frame. Returns nil when fVal is not a
+// partial-application value (i.e. the application target is not callable);
+// every handled case returns a non-nil node for the trampoline to finish
+// reducing.
+func applyPartial(env *ast.Env, fVal ast.Node, node ast.AppNode) ast.Node {
+	switch f := fVal.(type) {
+	case ast.HLookupPartialNode:
+		key := getMapKey(env, node.Right)
+		val, ok := f.Map[key]
+		if !ok {
+			panic(ast.RuntimeError{Msg: "h_lookup: key not found: " + key})
+		}
+		return val
+	case ast.HInsertPartialNode1:
+		key := getMapKey(env, node.Right)
+		return ast.HInsertPartialNode2{Map: f.Map, Key: key}
+	case ast.HInsertPartialNode2:
+		val := Whnf(env, node.Right)
+		newMap := make(map[string]ast.Node, len(f.Map)+1)
+		for k, v := range f.Map {
+			newMap[k] = v
+		}
+		newMap[f.Key] = val
+		return ast.MapNode{Map: newMap}
+	case ast.MemberPartialNode:
+		key := getMapKey(env, node.Right)
+		_, ok := f.Set[key]
+		return ast.BoolNode{Val: ok}
+	case ast.SeqPartialNode:
+		return node.Right
+	case ast.SplitPartialNode:
+		s := getStringValue(env, node.Right)
+		var res []string
+		var current strings.Builder
+		delims := f.Delims
+		for _, r := range s {
+			isDelim := false
+			for _, d := range delims {
+				if r == d {
+					isDelim = true
+					break
+				}
+			}
+			if isDelim {
+				if current.Len() > 0 {
+					res = append(res, current.String())
+					current.Reset()
+				}
+			} else {
+				current.WriteRune(r)
+			}
+		}
+		if current.Len() > 0 {
+			res = append(res, current.String())
+		}
+		var listNode ast.Node = ast.NilNode{}
+		for i := len(res) - 1; i >= 0; i-- {
+			listNode = ast.ConsNode{Head: MakeStringNode(res[i]), Tail: listNode}
+		}
+		return listNode
+	case ast.ListGetPartialNode:
+		idxVal := Whnf(env, node.Right)
+		idx := idxVal.(ast.IntNode).Val
+		if idx < 0 || idx >= int64(len(f.List)) {
+			panic(ast.RuntimeError{Msg: fmt.Sprintf("list_get: index out of bounds: %d (size %d)", idx, len(f.List))})
+		}
+		return ast.IntNode{Val: f.List[idx]}
+	case ast.ListSetPartialNode1:
+		idxVal := Whnf(env, node.Right)
+		idx := idxVal.(ast.IntNode).Val
+		return ast.ListSetPartialNode2{List: f.List, Index: idx}
+	case ast.ListSetPartialNode2:
+		valNode := Whnf(env, node.Right)
+		val := valNode.(ast.IntNode).Val
+		idx := f.Index
+		if idx < 0 || idx >= int64(len(f.List)) {
+			panic(ast.RuntimeError{Msg: fmt.Sprintf("list_set: index out of bounds: %d (size %d)", idx, len(f.List))})
+		}
+		newList := make([]int64, len(f.List))
+		copy(newList, f.List)
+		newList[idx] = val
+		var listNode ast.Node = ast.NilNode{}
+		for i := len(newList) - 1; i >= 0; i-- {
+			listNode = ast.ConsNode{Head: ast.IntNode{Val: newList[i]}, Tail: listNode}
+		}
+		return listNode
+	case ast.MemoizeNode:
+		argVal := Whnf(env, node.Right)
+		key := PrintNode(env, argVal)
+		if val, ok := f.Cache[key]; ok {
+			return val
+		}
+		res := Whnf(env, ast.AppNode{Left: f.Func, Right: argVal})
+		f.Cache[key] = res
+		return res
+	case ast.SortByPartialNode:
+		listVal := Whnf(env, node.Right)
+		var elems []ast.Node
+		curr := listVal
+		for {
+			lVal := Whnf(env, curr)
+			if cons, ok := lVal.(ast.ConsNode); ok {
+				elems = append(elems, cons.Head)
+				curr = cons.Tail
+			} else if _, ok := lVal.(ast.NilNode); ok {
+				break
+			} else {
+				panic(ast.RuntimeError{Msg: "sort_by expects a list"})
+			}
+		}
+		var sortErr error
+		slices.SortFunc(elems, func(a, b ast.Node) int {
+			if sortErr != nil {
+				return 0
+			}
+			res1 := Whnf(env, ast.AppNode{Left: f.Cmp, Right: a})
+			res2 := Whnf(env, ast.AppNode{Left: res1, Right: b})
+			if i, ok := res2.(ast.IntNode); ok {
+				return int(i.Val)
+			}
+			sortErr = fmt.Errorf("sort_by: comparison function did not return an integer")
+			return 0
+		})
+		if sortErr != nil {
+			panic(ast.RuntimeError{Msg: sortErr.Error()})
+		}
+		var listNode ast.Node = ast.NilNode{}
+		for i := len(elems) - 1; i >= 0; i-- {
+			listNode = ast.ConsNode{Head: elems[i], Tail: listNode}
+		}
+		return listNode
+	case ast.HLookupDefPartialNode1:
+		key := getMapKey(env, node.Right)
+		return ast.HLookupDefPartialNode2{Map: f.Map, Key: key}
+	case ast.HLookupDefPartialNode2:
+		valNode := Whnf(env, node.Right)
+		val, ok := f.Map[f.Key]
+		if !ok {
+			return valNode
+		}
+		return val
+	}
+	return nil
+}
+
+// applyBuiltin applies the named builtin to the argument of node (kept out
+// of whnfCore for the same stack-frame reason as applyPartial). The result
+// is handed back to the trampoline, which finishes reducing it to WHNF.
+func applyBuiltin(env *ast.Env, name string, node ast.AppNode) ast.Node {
+	switch name {
+	case "hd":
+		e2Val := Whnf(env, node.Right)
+		if c, ok := e2Val.(ast.ConsNode); ok {
+			return c.Head
+		}
+		if _, ok := e2Val.(ast.NilNode); ok {
+			panic(ast.RuntimeError{Msg: "hd applied to empty list"})
+		}
+		panic(ast.RuntimeError{Msg: "hd expects a list"})
+	case "tl":
+		e2Val := Whnf(env, node.Right)
+		if c, ok := e2Val.(ast.ConsNode); ok {
+			return c.Tail
+		}
+		if _, ok := e2Val.(ast.NilNode); ok {
+			panic(ast.RuntimeError{Msg: "tl applied to empty list"})
+		}
+		panic(ast.RuntimeError{Msg: "tl expects a list"})
+	case "read":
+		filename := getStringValue(env, node.Right)
+		content, err := os.ReadFile(filename)
+		if err != nil {
+			panic(ast.RuntimeError{Msg: fmt.Sprintf("Failed to read file: %s", filename)})
+		}
+		return MakeStringNode(string(content))
+	case "lines":
+		content := getStringValue(env, node.Right)
+		strList := splitLines(content)
+		var listNode ast.Node = ast.NilNode{}
+		for i := len(strList) - 1; i >= 0; i-- {
+			listNode = ast.ConsNode{Head: MakeStringNode(strList[i]), Tail: listNode}
+		}
+		return listNode
+	case "numval":
+		s := getStringValue(env, node.Right)
+		sTrimmed := strings.Map(func(r rune) rune {
+			if unicode.IsSpace(r) {
+				return -1
+			}
+			return r
+		}, s)
+		v, err := strconv.ParseInt(sTrimmed, 10, 64)
+		if err != nil {
+			panic(ast.RuntimeError{Msg: "numval: invalid integer: " + s})
+		}
+		return ast.IntNode{Val: v}
+	case "show":
+		evaluatedNode := Whnf(env, node.Right)
+		s := PrintNode(env, evaluatedNode)
+		return MakeStringNode(s)
+	case "length":
+		var length int64 = 0
+		curr := node.Right
+		for {
+			lVal := Whnf(env, curr)
+			if cons, ok := lVal.(ast.ConsNode); ok {
+				length++
+				curr = cons.Tail
+			} else if _, ok := lVal.(ast.NilNode); ok {
+				break
+			} else {
+				panic(ast.RuntimeError{Msg: "length expects a list"})
+			}
+		}
+		return ast.IntNode{Val: length}
+	case "seq":
+		Whnf(env, node.Right)
+		return ast.SeqPartialNode{}
+	case "reverse":
+		var reversed ast.Node = ast.NilNode{}
+		curr := node.Right
+		for {
+			lVal := Whnf(env, curr)
+			if cons, ok := lVal.(ast.ConsNode); ok {
+				reversed = ast.ConsNode{Head: cons.Head, Tail: reversed}
+				curr = cons.Tail
+			} else if _, ok := lVal.(ast.NilNode); ok {
+				break
+			} else {
+				panic(ast.RuntimeError{Msg: "reverse expects a list"})
+			}
+		}
+		return reversed
+	case "h_lookup":
+		mapVal := Whnf(env, node.Right)
+		mNode, ok := mapVal.(ast.MapNode)
+		if !ok {
+			panic(ast.RuntimeError{Msg: "h_lookup: expected map as first argument"})
+		}
+		return ast.HLookupPartialNode{Map: mNode.Map}
+	case "h_insert":
+		mapVal := Whnf(env, node.Right)
+		mNode, ok := mapVal.(ast.MapNode)
+		if !ok {
+			panic(ast.RuntimeError{Msg: "h_insert: expected map as first argument"})
+		}
+		return ast.HInsertPartialNode1{Map: mNode.Map}
+	case "member":
+		setVal := Whnf(env, node.Right)
+		sNode, ok := setVal.(ast.SetNode)
+		if !ok {
+			panic(ast.RuntimeError{Msg: "member: expected set as first argument"})
+		}
+		return ast.MemberPartialNode{Set: sNode.Set}
+	case "split":
+		delims := getStringValue(env, node.Right)
+		return ast.SplitPartialNode{Delims: delims}
+	case "parse_ints":
+		s := getStringValue(env, node.Right)
+		var res []int64
+		var current strings.Builder
+		for _, r := range s {
+			if (r >= '0' && r <= '9') || r == '-' {
+				current.WriteRune(r)
+			} else {
+				if current.Len() > 0 {
+					str := current.String()
+					if str != "-" {
+						val, err := strconv.ParseInt(str, 10, 64)
+						if err == nil {
+							res = append(res, val)
+						}
+					}
+					current.Reset()
+				}
+			}
+		}
+		if current.Len() > 0 {
+			str := current.String()
+			if str != "-" {
+				val, err := strconv.ParseInt(str, 10, 64)
+				if err == nil {
+					res = append(res, val)
+				}
+			}
+		}
+		var listNode ast.Node = ast.NilNode{}
+		for i := len(res) - 1; i >= 0; i-- {
+			listNode = ast.ConsNode{Head: ast.IntNode{Val: res[i]}, Tail: listNode}
+		}
+		return listNode
+	case "list_get":
+		listVal := Whnf(env, node.Right)
+		slice := getIntSlice(env, listVal)
+		return ast.ListGetPartialNode{List: slice}
+	case "list_set":
+		listVal := Whnf(env, node.Right)
+		slice := getIntSlice(env, listVal)
+		return ast.ListSetPartialNode1{List: slice}
+	case "memoize":
+		fn := Whnf(env, node.Right)
+		return ast.MemoizeNode{Func: fn, Cache: make(map[string]ast.Node)}
+	case "sort_ints":
+		listVal := Whnf(env, node.Right)
+		var elems []int64
+		curr := listVal
+		for {
+			lVal := Whnf(env, curr)
+			if cons, ok := lVal.(ast.ConsNode); ok {
+				val := Whnf(env, cons.Head).(ast.IntNode).Val
+				elems = append(elems, val)
+				curr = cons.Tail
+			} else if _, ok := lVal.(ast.NilNode); ok {
+				break
+			} else {
+				panic(ast.RuntimeError{Msg: "sort_ints expects a list of integers"})
+			}
+		}
+		slices.Sort(elems)
+		var listNode ast.Node = ast.NilNode{}
+		for i := len(elems) - 1; i >= 0; i-- {
+			listNode = ast.ConsNode{Head: ast.IntNode{Val: elems[i]}, Tail: listNode}
+		}
+		return listNode
+	case "sort_edges":
+		listVal := Whnf(env, node.Right)
+		var elems []ast.Node
+		curr := listVal
+		for {
+			lVal := Whnf(env, curr)
+			if cons, ok := lVal.(ast.ConsNode); ok {
+				elems = append(elems, cons.Head)
+				curr = cons.Tail
+			} else if _, ok := lVal.(ast.NilNode); ok {
+				break
+			} else {
+				panic(ast.RuntimeError{Msg: "sort_edges expects a list"})
+			}
+		}
+		slices.SortFunc(elems, func(a, b ast.Node) int {
+			aT := Whnf(env, a).(ast.TupleNode)
+			bT := Whnf(env, b).(ast.TupleNode)
+			d1 := Whnf(env, aT.Elems[2]).(ast.IntNode).Val
+			d2 := Whnf(env, bT.Elems[2]).(ast.IntNode).Val
+			if d1 < d2 {
+				return -1
+			}
+			if d1 > d2 {
+				return 1
+			}
+			return 0
+		})
+		var listNode ast.Node = ast.NilNode{}
+		for i := len(elems) - 1; i >= 0; i-- {
+			listNode = ast.ConsNode{Head: elems[i], Tail: listNode}
+		}
+		return listNode
+	case "sort_pts":
+		listVal := Whnf(env, node.Right)
+		var elems []ast.Node
+		curr := listVal
+		for {
+			lVal := Whnf(env, curr)
+			if cons, ok := lVal.(ast.ConsNode); ok {
+				elems = append(elems, cons.Head)
+				curr = cons.Tail
+			} else if _, ok := lVal.(ast.NilNode); ok {
+				break
+			} else {
+				panic(ast.RuntimeError{Msg: "sort_pts expects a list"})
+			}
+		}
+		slices.SortFunc(elems, func(a, b ast.Node) int {
+			aT := Whnf(env, a).(ast.TupleNode)
+			bT := Whnf(env, b).(ast.TupleNode)
+			aCoords := Whnf(env, aT.Elems[1]).(ast.TupleNode)
+			bCoords := Whnf(env, bT.Elems[1]).(ast.TupleNode)
+			x1 := Whnf(env, aCoords.Elems[0]).(ast.IntNode).Val
+			x2 := Whnf(env, bCoords.Elems[0]).(ast.IntNode).Val
+			if x1 < x2 {
+				return -1
+			}
+			if x1 > x2 {
+				return 1
+			}
+			return 0
+		})
+		var listNode ast.Node = ast.NilNode{}
+		for i := len(elems) - 1; i >= 0; i-- {
+			listNode = ast.ConsNode{Head: elems[i], Tail: listNode}
+		}
+		return listNode
+	case "sort_by":
+		cmpNode := Whnf(env, node.Right)
+		return ast.SortByPartialNode{Cmp: cmpNode}
+	case "h_lookup_def":
+		mapVal := Whnf(env, node.Right)
+		mNode, ok := mapVal.(ast.MapNode)
+		if !ok {
+			panic(ast.RuntimeError{Msg: "h_lookup_def: expected map as first argument"})
+		}
+		return ast.HLookupDefPartialNode1{Map: mNode.Map}
+	default:
+		panic(ast.RuntimeError{Msg: "Unbound variable: " + name})
 	}
 }
 

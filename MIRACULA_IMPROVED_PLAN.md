@@ -241,7 +241,7 @@ This drops `seq`, `scan_left`/`scan_right`, `dedup8`, `sort_pts`, and the merge-
 
 ---
 
-## 8. Deep-Force Robustness: Strict Folds and an Iterative Forcer ✅ items 1–2 / 🟠 items 3–4
+## 8. Deep-Force Robustness: Strict Folds and an Iterative Forcer ✅ (implemented; fully unbounded depth deferred to Phase 9.5)
 
 ### Evidence
 
@@ -251,8 +251,8 @@ After Phase 6, `sum [1..50000]` is linear (235 ms), but `sum [1..100000]` **cras
 
 1. ✅ **`eval/eval.go` + `typecheck/typecheck.go`: native `seq :: * -> ** -> **`** — evaluates the first argument to WHNF, returns the second. Lets Miracula code force accumulators of any type and retires the `ifzero` idiom. (Script-level `seq` definitions in older files are shadowed by the builtin, which has identical semantics.)
 2. ✅ **`stdenv.m`: strict left fold** — `foldl` built on `seq` (`foldl f z (x:xs) = seq z2 (foldl f z2 xs) where z2 = f z x`), keeping `sum`, `product`, etc. constant-space. Measured: `sum [1..1000000]` = 1.7 s, constant stack.
-3. **`eval/eval.go`: shrink `Whnf` stack frames** — extract the large, rarely-hot cases (`AppNode` built-in dispatch, `ZF*`, sorting) into separate functions so the recursive frame drops from ~2.4 KB to a few hundred bytes; raises the safe forcing depth by ~10×.
-4. **(Longer term) iterative thunk-chain forcing** — when `Whnf` encounters a chain of unevaluated `ThunkCell`s, push cells onto an explicit `[]*ThunkCell` work stack and update them from the innermost value outward, removing the depth limit entirely.
+3. ✅ **`eval/eval.go`: shrink evaluator stack frames** — the built-in dispatch (`applyBuiltin`), partial-application handling (`applyPartial`), and comprehension stepping (`stepZFGenerator`) moved out of the recursive core. Measured with `go build -gcflags=-S`: the recursive frame dropped from ~2.4 KB (old `Whnf`) to 1136 B (`whnfCore`) + 80 B (`Whnf` wrapper); the safe depth for genuinely non-tail recursion (`foldr`, lazy accumulator folds through strict operands) rose from <100 000 to ~400 000 levels (300 000 measured OK at 515 ms, 500 000 overflows).
+4. ✅ **Iterative thunk-chain forcing** — `Whnf` is now a thin wrapper around `whnfCore`, which records unevaluated thunks reached in tail position on an explicit pending stack instead of recursing; the final WHNF is written into every recorded cell (they share it by construction, so blackhole detection still works). Pure indirection chains no longer consume Go stack at all. List equality (`eq`) also walks tails iteratively now. **Remaining limit:** a chain forced through a *strict operand* (arithmetic, pattern match, function position) still needs one small nested frame per level — removing that entirely requires an explicit continuation (CEK-style) machine, folded into Phase 9 as item 9.5.
 
 ---
 
@@ -268,6 +268,7 @@ Phase 6 removes the quadratic blow-up, but every variable reference still walks 
 2. **`ast/ast.go`**: add the resolved node types and the slice-backed `Env` frame; keep the legacy path for the REPL's incremental typing until the resolver covers it.
 3. **`eval/eval.go`**: `LocalVarNode` lookup becomes two array indexes; `GlobalVarNode` becomes one map read (or, better, a pre-resolved `*ThunkCell` pointer captured at resolve time — zero lookups).
 4. **Thunk avoidance** (✅ first half implemented as `bindArg` in `eval.go`): an argument that is just a variable reference now passes its existing local binding through instead of allocating a fresh indirection thunk. Before this, every `loop acc (curr+1)`-style call wrapped `acc` in a new thunk, so long runs of iterations built an unbounded indirection chain — this is what crashed `aoc2.m` with a fatal stack overflow (~69 000-deep chains from its largest ranges). Still open: skip `ThunkCell` allocation for arithmetic operand subtrees whose evaluation is unconditional.
+5. **Explicit continuation (CEK-style) evaluation** — replace nested `Whnf` calls for strict positions (arithmetic operands, scrutinees, function position) with an explicit continuation stack so evaluation depth is bounded only by heap. This removes the last ~400 000-level recursion ceiling left after Phase 8 and is best done together with the resolver, since both rewrite the core evaluation loop.
 
 Expected effect: removes the remaining `Env.Lookup`/`memequal` cost entirely and cuts allocations per reduction roughly in half; estimated 2–4× on top of Phase 6 for `aoc8.m` (3.5 s → ~1 s).
 
