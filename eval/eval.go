@@ -71,6 +71,14 @@ func bindArg(env *ast.Env, arg ast.Node) ast.Node {
 				return curr.Val
 			}
 		}
+	case ast.LocalVarNode:
+		curr := env
+		for d := r.Depth; d > 0 && curr != nil; d-- {
+			curr = curr.Parent
+		}
+		if curr != nil {
+			return curr.Val
+		}
 	}
 	return ast.ThunkNode{Cell: &ast.ThunkCell{State: ast.Unevaluated, Expr: arg, Env: env}}
 }
@@ -440,6 +448,52 @@ func whnfCore(env *ast.Env, n ast.Node, pending *[]*ast.ThunkCell) ast.Node {
 				}
 			}
 			return ast.TupleNode{Elems: elmsPrime}
+		case ast.LocalVarNode:
+			curr := env
+			for d := node.Depth; d > 0; d-- {
+				curr = curr.Parent
+				if curr == nil {
+					panic(ast.RuntimeError{Msg: "Internal error: bad lexical depth for: " + node.Name})
+				}
+			}
+			val := curr.Val
+			if th, ok := val.(ast.ThunkNode); ok {
+				cell := th.Cell
+				switch cell.State {
+				case ast.Evaluated:
+					switch cv := cell.Val.(type) {
+					case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
+						return cv
+					default:
+						n = cv
+						continue
+					}
+				case ast.Evaluating:
+					panic(ast.BlackholeError{Msg: "Infinite loop on identifier: " + node.Name})
+				case ast.Unevaluated:
+					cell.State = ast.Evaluating
+					*pending = append(*pending, cell)
+					n = cell.Expr
+					env = cell.Env
+					continue
+				}
+			}
+			n = val
+			continue
+		case ast.GlobalVarNode:
+			gv, gok := env.Globals[node.Name]
+			if !gok {
+				panic(ast.RuntimeError{Msg: "Unbound variable: " + node.Name})
+			}
+			// globals are closed terms over the global scope: evaluate them
+			// in the chain's root frame so caller locals are not captured
+			if env.Root != nil {
+				env = env.Root
+			} else {
+				env = &ast.Env{Globals: env.Globals}
+			}
+			n = gv
+			continue
 		case ast.VarNode:
 			name := node.Name
 			switch name {
@@ -466,7 +520,11 @@ func whnfCore(env *ast.Env, n ast.Node, pending *[]*ast.ThunkCell) ast.Node {
 					// them in a globals-only environment so caller locals are
 					// not captured (static scoping; also keeps the environment
 					// chain from growing on every call).
-					env = &ast.Env{Globals: env.Globals}
+					if env.Root != nil {
+						env = env.Root
+					} else {
+						env = &ast.Env{Globals: env.Globals}
+					}
 					val = gv
 					ok = true
 				}
@@ -1267,6 +1325,10 @@ func PrintNode(env *ast.Env, n ast.Node) string {
 		return "<let>"
 	case ast.VarNode:
 		return node.Name
+	case ast.LocalVarNode:
+		return node.Name
+	case ast.GlobalVarNode:
+		return node.Name
 	case ast.AppNode:
 		return "(" + PrintNode(env, node.Left) + " " + PrintNode(env, node.Right) + ")"
 	case ast.SubNode:
@@ -1408,6 +1470,10 @@ func DebugPrintNode(n ast.Node) string {
 		return "HLookupDef2"
 	case ast.VarNode:
 		return fmt.Sprintf("Var(%s)", node.Name)
+	case ast.LocalVarNode:
+		return fmt.Sprintf("LocalVar(%s,%d)", node.Name, node.Depth)
+	case ast.GlobalVarNode:
+		return fmt.Sprintf("GlobalVar(%s)", node.Name)
 	case ast.LamNode:
 		return fmt.Sprintf("Lam(%s, %s)", node.Var, DebugPrintNode(node.Body))
 	case ast.AppNode:

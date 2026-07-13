@@ -537,7 +537,11 @@ func LoadScriptFile(filename string, env *ast.Env, typeEnv *typecheck.TypeEnv) (
 		finalTy := sCurr.Apply(selfTy)
 		scheme := typecheck.Generalize(sCurr.ApplyEnv(accTypeEnv), finalTy)
 		accTypeEnv = accTypeEnv.Extend(name, scheme)
-		accEnv = accEnv.ExtendGlobal(name, desugaredLambda)
+		resolved := eval.Resolve(desugaredLambda)
+		if posVal, found := ast.NodePositions.Load(ast.GetNodeKey(desugaredLambda)); found {
+			ast.NodePositions.Store(ast.GetNodeKey(resolved), posVal)
+		}
+		accEnv = accEnv.ExtendGlobal(name, resolved)
 	}
 
 	return accEnv, accTypeEnv, nil
@@ -858,7 +862,11 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 					finalTy := sCurr.Apply(selfTy)
 					scheme := typecheck.Generalize(sCurr.ApplyEnv(accTypeEnv), finalTy)
 					accTypeEnv = accTypeEnv.Extend(name, scheme)
-					accEnv = accEnv.ExtendGlobal(name, finalLambda)
+					resolved := eval.Resolve(finalLambda)
+					if posVal, found := ast.NodePositions.Load(ast.GetNodeKey(finalLambda)); found {
+						ast.NodePositions.Store(ast.GetNodeKey(resolved), posVal)
+					}
+					accEnv = accEnv.ExtendGlobal(name, resolved)
 				}
 
 				for _, name := range order {
@@ -910,7 +918,7 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 				}
 
 				startTime := time.Now()
-				result := eval.Whnf(env, evalStmt.Expr)
+				result := eval.Whnf(env, eval.Resolve(evalStmt.Expr))
 				sVal, isStr := eval.IsString(env, result)
 				var output string
 				if isStr {
@@ -1184,7 +1192,7 @@ func EvaluateAndExit(env *ast.Env, typeEnv *typecheck.TypeEnv, parameter string,
 			}
 
 			startTime := time.Now()
-			result := eval.Whnf(env, s.Expr)
+			result := eval.Whnf(env, eval.Resolve(s.Expr))
 			sVal, isStr := eval.IsString(env, result)
 			var output string
 			if isStr {
