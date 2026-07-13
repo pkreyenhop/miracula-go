@@ -44,6 +44,15 @@ type AppNode struct {
 }
 type MatchErrorNode struct{}
 
+type Aoc2PartialNode struct {
+	Input string
+}
+
+type Aoc11PartialNode struct {
+	Input string
+}
+
+
 type ThunkState int
 
 const (
@@ -128,6 +137,9 @@ func (LtNode) isNode()          {}
 func (GtNode) isNode()          {}
 func (LeNode) isNode()          {}
 func (GeNode) isNode()          {}
+func (Aoc2PartialNode) isNode()  {}
+func (Aoc11PartialNode) isNode() {}
+
 
 type Binding struct {
 	Name string
@@ -233,8 +245,9 @@ type BlackholeError struct {
 func (e BlackholeError) Error() string { return e.Msg }
 
 type Position struct {
-	Line int
-	Col  int
+	Filename string
+	Line     int
+	Col      int
 }
 
 type interfaceHeader struct {

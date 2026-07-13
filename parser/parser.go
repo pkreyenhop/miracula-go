@@ -45,8 +45,9 @@ func (e ParseError) Error() string {
 }
 
 type Parser struct {
-	tokens []lexer.Token
-	pos    int
+	tokens   []lexer.Token
+	pos      int
+	filename string
 }
 
 func (p *Parser) errorf(format string, args ...interface{}) {
@@ -60,11 +61,16 @@ func NewParser(tokens []lexer.Token) *Parser {
 	return &Parser{tokens: tokens, pos: 0}
 }
 
+func (p *Parser) WithFilename(filename string) *Parser {
+	p.filename = filename
+	return p
+}
+
 func (p *Parser) mark(node ast.Node, tok lexer.Token) ast.Node {
 	if node != nil {
 		key := ast.GetNodeKey(node)
 		if key != nil {
-			ast.NodePositions.Store(key, ast.Position{Line: tok.Line, Col: tok.Col})
+			ast.NodePositions.Store(key, ast.Position{Filename: p.filename, Line: tok.Line, Col: tok.Col})
 		}
 	}
 	return node

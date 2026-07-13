@@ -8,16 +8,23 @@ Miracula is a lightweight interpreter and interactive REPL for a lazy functional
 - **Lexical Closures (Lexical Scoping):** First-class environment-capturing closures that support lexical scope for nested curried functions, ensuring outer variable bindings are resolved correctly in recursive/nested calls.
 - **List Pattern Matching & Desugaring:** Allows defining functions through multiple equations with pattern matching on integers, characters, variables, and list patterns (`[]` and `(x:xs)` cons patterns) compiled into conditional decision trees.
 - **Lazy List Ranges:** Dynamic sequence generators using `[e1..e2]` syntax (e.g., `[1..100]`), lazily evaluated step-by-step so that sequences are generated only as they are accessed.
-- **Interactive REPL:** Provides a prompt (`miranda> `) to define variables/functions and evaluate expressions interactively.
+- **Interactive REPL**: Provides a prompt (`miranda> `) to define variables/functions and evaluate expressions interactively.
   - **Enhanced Line Editing & Navigation**:
     - **Cursor Movement**: Left/Right arrow keys.
     - **History Navigation**: Up/Down arrow keys (retains typed draft line when scrolling back to current input).
     - **Go to Start/End**: `Ctrl-A` (or `Home`) and `Ctrl-E` (or `End`).
     - **Delete/Kill**: `Ctrl-K` (kill to end of line), `Backspace` (delete backward), and `Delete` (delete under cursor).
-    - **Interrupt/Exit**: `Ctrl-C` to cancel current entry, and `Ctrl-D` (on empty line) or `/q` to exit the REPL.
+    - **Interrupt/Cancel**: `Ctrl-C` cancels the current text entry. If a computation is actively evaluating, `Ctrl-C` terminates the evaluation safely and returns control back to the REPL prompt without exiting.
     - **Autocomplete (Tab)**: Auto-completes keywords (`if`, `then`, `else`, `where`, `otherwise`, `mod`), built-in functions (`hd`, `tl`, `show`, `length`, etc.), and dynamically defined global variables/functions. Pressing `Tab` repeatedly cycles through matching candidates.
-  - `/e` command: Open and edit the loaded script file in `vi`, reloading all definitions on exit.
-  - `/q` command: Exit the REPL.
+  - **Special REPL Commands**:
+    - `/e [file.m]`: Open and edit the loaded script file (default `~/.script.m`) in `vi` (or `./mica`), reloading all definitions on exit.
+    - `/m`: Open the combined language manual using the Unix `more` command.
+    - `!COMMAND`: Execute `COMMAND` directly in the Unix shell (via `sh -c`).
+    - `?FUNCTION`: Display the first line of `FUNCTION`'s definition.
+    - `??FUNCTION`: Open the source file where `FUNCTION` is defined in the editor at the exact definition line.
+    - `/?` or `/h`: Show the list of special REPL commands and their descriptions.
+    - `/q`, `exit`, or `quit` (or `Ctrl-D` on empty line): Exit the REPL.
+  - **Persistent Workspace**: All global variables and functions defined interactively inside the REPL are automatically saved to `~/.script.m`, which is loaded automatically at startup.
 
 ## Concrete Surface Syntax & AST
 Miracula parses high-level surface syntax construct and desugars them into core primitives:
@@ -55,7 +62,7 @@ Launch the REPL by running the compiled executable:
 ```bash
 ./miracula [script_file]
 ```
-If no script file argument is provided, the interpreter defaults to loading `script.m` if present.
+If no script file argument is provided, the interpreter defaults to loading `~/.script.m`.
 
 For example, to run the interactive REPL with the standard test suite:
 ```bash

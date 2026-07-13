@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -23,6 +25,24 @@ var (
 	lastErrorLine int
 	lastErrorCol  int
 )
+
+// ExpandHome resolves a Unix home directory prefix (`~`) in the given path,
+// returning the absolute path or the original path if the home directory
+// cannot be determined or if there is no prefix.
+func ExpandHome(path string) string {
+	if strings.HasPrefix(path, "~") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			if path == "~" {
+				return home
+			}
+			if len(path) > 1 && (path[1] == '/' || path[1] == '\\') {
+				return filepath.Join(home, path[2:])
+			}
+		}
+	}
+	return path
+}
 
 func IsTTY() bool {
 	cmd := exec.Command("stty", "-g")
@@ -356,10 +376,13 @@ func saveHistory(history []string) {
 func LoadScriptFile(filename string, env *ast.Env, typeEnv *typecheck.TypeEnv) (*ast.Env, *typecheck.TypeEnv, error) {
 	lastErrorLine = 0
 	lastErrorCol = 0
-	bytes, err := os.ReadFile(filename)
+	bytes, err := os.ReadFile(ExpandHome(filename))
 	if err != nil {
 		if filename == "stdenv.m" {
 			fmt.Println("Standard environment file 'stdenv.m' not found. Skipping.")
+			return env, typeEnv, nil
+		}
+		if filename == "~/.script.m" {
 			return env, typeEnv, nil
 		}
 		fmt.Printf("Script file '%s' not found. Starting with empty space.\n", filename)
@@ -439,7 +462,7 @@ func LoadScriptFile(filename string, env *ast.Env, typeEnv *typecheck.TypeEnv) (
 					}
 				}
 			}()
-			p := parser.NewParser(seg)
+			p := parser.NewParser(seg).WithFilename(filename)
 			stmt := p.Parse()
 			if bind, ok := stmt.(parser.ScriptBindStmt); ok {
 				bindings = append(bindings, bind.Binding)
@@ -470,6 +493,12 @@ func LoadScriptFile(filename string, env *ast.Env, typeEnv *typecheck.TypeEnv) (
 	for _, name := range order {
 		eqList := grouped[name]
 		desugaredLambda := parser.DesugarEquations(eqList)
+		if len(eqList) > 0 {
+			bodyKey := ast.GetNodeKey(eqList[0].Body)
+			if posVal, found := ast.NodePositions.Load(bodyKey); found {
+				ast.NodePositions.Store(ast.GetNodeKey(desugaredLambda), posVal)
+			}
+		}
 
 		selfTy := tc.Fresh()
 		tcEnv := accTypeEnv.Extend(name, typecheck.Scheme{Vars: nil, Ty: selfTy})
@@ -515,6 +544,24 @@ func LoadScriptFile(filename string, env *ast.Env, typeEnv *typecheck.TypeEnv) (
 }
 
 func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT)
+	doneChan := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-sigChan:
+				eval.SetInterrupted(true)
+			case <-doneChan:
+				return
+			}
+		}
+	}()
+	defer func() {
+		close(doneChan)
+		signal.Stop(sigChan)
+	}()
+
 	interactive := IsTTY()
 	var history []string
 	if interactive {
@@ -550,6 +597,30 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 		if lineTrimmed == "" {
 			continue
 		}
+		if lineTrimmed == "/?" || lineTrimmed == "/h" || lineTrimmed == "help" {
+			fmt.Println("Available commands:")
+			fmt.Println("  /q, exit, quit    Exit the REPL")
+			fmt.Println("  /e [file.m]       Edit script file (default ~/.script.m)")
+			fmt.Println("  /m                Open language manual using 'more'")
+			fmt.Println("  !COMMAND          Execute COMMAND in the Unix shell")
+			fmt.Println("  ?FUNCTION         Show the first line of a function's definition")
+			fmt.Println("  ??FUNCTION        Open the file defining FUNCTION in editor at the definition line")
+			fmt.Println("  /? or /h          Show this help menu")
+			continue
+		}
+		if strings.HasPrefix(lineTrimmed, "??") {
+			funcName := strings.TrimSpace(strings.TrimPrefix(lineTrimmed, "??"))
+			handleShowDefinition(env, funcName, true)
+			continue
+		} else if strings.HasPrefix(lineTrimmed, "?") {
+			funcName := strings.TrimSpace(strings.TrimPrefix(lineTrimmed, "?"))
+			handleShowDefinition(env, funcName, false)
+			continue
+		}
+		if strings.HasPrefix(lineTrimmed, "!") {
+			handleShellCommand(lineTrimmed)
+			continue
+		}
 		if lineTrimmed == "/q" || lineTrimmed == "exit" || lineTrimmed == "quit" {
 			if interactive {
 				// Goodbye already printed by readLine / Enter / EOF loop
@@ -557,6 +628,10 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 				fmt.Println("Goodbye.")
 			}
 			break
+		}
+		if lineTrimmed == "/m" {
+			handleOpenManual()
+			continue
 		}
 		if strings.HasPrefix(lineTrimmed, "/e") {
 			targetFile := scriptFile
@@ -576,19 +651,20 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 				editor = "vi"
 			}
 			var cmd *exec.Cmd
+			resolvedTargetFile := ExpandHome(targetFile)
 			if lastErrorLine > 0 {
 				fmt.Printf("Opening %s %s at line %d, col %d ...\n", editor, targetFile, lastErrorLine, lastErrorCol)
 				if editor == "./mica" {
-					cmd = exec.Command(editor, targetFile, strconv.Itoa(lastErrorLine), strconv.Itoa(lastErrorCol))
+					cmd = exec.Command(editor, resolvedTargetFile, strconv.Itoa(lastErrorLine), strconv.Itoa(lastErrorCol))
 				} else {
-					cmd = exec.Command(editor, fmt.Sprintf("+call cursor(%d,%d)", lastErrorLine, lastErrorCol), targetFile)
+					cmd = exec.Command(editor, fmt.Sprintf("+call cursor(%d,%d)", lastErrorLine, lastErrorCol), resolvedTargetFile)
 				}
 				// Reset error tracking after opening
 				lastErrorLine = 0
 				lastErrorCol = 0
 			} else {
 				fmt.Printf("Opening %s %s ...\n", editor, targetFile)
-				cmd = exec.Command(editor, targetFile)
+				cmd = exec.Command(editor, resolvedTargetFile)
 			}
 			cmd.Stdin = os.Stdin
 			cmd.Stdout = os.Stdout
@@ -596,7 +672,23 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 			_ = cmd.Run()
 			fmt.Printf("Reloading environment profiles from %s...\n", targetFile)
 			envWithStd, typeEnvWithStd, _ := LoadScriptFile("stdenv.m", ast.NewEnv(), typecheck.DefaultTypeEnv())
-			reloadedEnv, reloadedTypeEnv, err := LoadScriptFile(targetFile, envWithStd, typeEnvWithStd)
+			
+			if envWithHome, typeEnvWithHome, err := LoadScriptFile("~/.script.m", envWithStd, typeEnvWithStd); err == nil {
+				envWithStd = envWithHome
+				typeEnvWithStd = typeEnvWithHome
+			}
+			
+			var reloadedEnv *ast.Env
+			var reloadedTypeEnv *typecheck.TypeEnv
+			var err error
+			
+			if ExpandHome(targetFile) != ExpandHome("~/.script.m") {
+				reloadedEnv, reloadedTypeEnv, err = LoadScriptFile(targetFile, envWithStd, typeEnvWithStd)
+			} else {
+				reloadedEnv = envWithStd
+				reloadedTypeEnv = typeEnvWithStd
+			}
+			
 			if err != nil {
 				fmt.Printf("Error reloading: %v\n", err)
 			} else {
@@ -675,24 +767,29 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 		}
 		tokens = lexer.ApplyLayout(layoutLines)
 
+		eval.SetInterrupted(false)
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					var te *typecheck.TypeError
-					if errVal, ok := r.(error); ok && errors.As(errVal, &te) {
-						fmt.Println(FormatTypeError("<stdin>", fullInput, te))
-					} else if rtErr, ok := r.(ast.RuntimeError); ok {
-						if strings.HasPrefix(rtErr.Msg, "Type Error:") {
-							fmt.Println(rtErr.Msg)
-						} else {
-							fmt.Printf("Runtime Error: %s\n", rtErr.Msg)
-						}
-					} else if bhErr, ok := r.(ast.BlackholeError); ok {
-						fmt.Printf("Runtime Error: %s\n", bhErr.Msg)
-					} else if pe, ok := r.(parser.ParseError); ok {
-						fmt.Println(FormatParseError("<stdin>", fullInput, pe))
+					if _, ok := r.(eval.InterruptedException); ok {
+						fmt.Println("\nEvaluation Interrupted.")
 					} else {
-						fmt.Printf("Error: %v\n", r)
+						var te *typecheck.TypeError
+						if errVal, ok := r.(error); ok && errors.As(errVal, &te) {
+							fmt.Println(FormatTypeError("<stdin>", fullInput, te))
+						} else if rtErr, ok := r.(ast.RuntimeError); ok {
+							if strings.HasPrefix(rtErr.Msg, "Type Error:") {
+								fmt.Println(rtErr.Msg)
+							} else {
+								fmt.Printf("Runtime Error: %s\n", rtErr.Msg)
+							}
+						} else if bhErr, ok := r.(ast.BlackholeError); ok {
+							fmt.Printf("Runtime Error: %s\n", bhErr.Msg)
+						} else if pe, ok := r.(parser.ParseError); ok {
+							fmt.Println(FormatParseError("<stdin>", fullInput, pe))
+						} else {
+							fmt.Printf("Error: %v\n", r)
+						}
 					}
 				}
 			}()
@@ -707,7 +804,7 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 			isMultiBind := false
 
 			for _, seg := range segments {
-				p := parser.NewParser(seg)
+				p := parser.NewParser(seg).WithFilename("~/.script.m")
 				stmt := p.Parse()
 				switch s := stmt.(type) {
 				case parser.ScriptBindStmt:
@@ -739,6 +836,12 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 				for _, name := range order {
 					eqList := grouped[name]
 					finalLambda := parser.DesugarEquations(eqList)
+					if len(eqList) > 0 {
+						bodyKey := ast.GetNodeKey(eqList[0].Body)
+						if posVal, found := ast.NodePositions.Load(bodyKey); found {
+							ast.NodePositions.Store(ast.GetNodeKey(finalLambda), posVal)
+						}
+					}
 
 					selfTy := tc.Fresh()
 					tcEnv := accTypeEnv.Extend(name, typecheck.Scheme{Vars: nil, Ty: selfTy})
@@ -764,8 +867,10 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 				env = accEnv
 				typeEnv = accTypeEnv
 
-				// Keep REPL definitions in scriptFile
-				f, err := os.OpenFile(scriptFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+				lineOffset := countLinesInFile(ExpandHome("~/.script.m"))
+
+				// Keep REPL definitions in ~/.script.m
+				f, err := os.OpenFile(ExpandHome("~/.script.m"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 				if err == nil {
 					toWrite := fullInput
 					if !strings.HasSuffix(toWrite, "\n") {
@@ -773,6 +878,29 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 					}
 					_, _ = f.WriteString(toWrite)
 					_ = f.Close()
+				}
+
+				// Update positions to reference ~/.script.m with the correct line offset
+				for _, name := range order {
+					val, ok := env.Lookup(name)
+					if ok {
+						key := ast.GetNodeKey(val)
+						if posVal, found := ast.NodePositions.Load(key); found {
+							if pos, ok := posVal.(ast.Position); ok {
+								ast.NodePositions.Store(key, ast.Position{
+									Filename: "~/.script.m",
+									Line:     pos.Line + lineOffset,
+									Col:      pos.Col,
+								})
+							}
+						} else {
+							ast.NodePositions.Store(key, ast.Position{
+								Filename: "~/.script.m",
+								Line:     lineOffset + 1,
+								Col:      1,
+							})
+						}
+					}
 				}
 			} else {
 				tc := typecheck.NewTypeChecker()
@@ -783,21 +911,298 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 
 				startTime := time.Now()
 				result := eval.Whnf(env, evalStmt.Expr)
+				sVal, isStr := eval.IsString(env, result)
+				var output string
+				if isStr {
+					output = sVal
+				} else {
+					output = eval.PrintNode(env, result)
+				}
 				duration := time.Since(startTime).Milliseconds()
 
-				sVal, isStr := eval.IsString(env, result)
 				if isStr {
-					fmt.Printf("Result:\n%s", sVal)
-					if len(sVal) > 0 && sVal[len(sVal)-1] == '\n' {
+					fmt.Printf("Result:\n%s", output)
+					if len(output) > 0 && output[len(output)-1] == '\n' {
 						// no extra newline
 					} else {
 						fmt.Println()
 					}
 				} else {
-					fmt.Printf("Result: %s\n", eval.PrintNode(env, result))
+					fmt.Printf("Result: %s\n", output)
 				}
 				fmt.Printf("Evaluation time: %d ms\n", duration)
 			}
 		}()
 	}
 }
+
+// countLinesInFile reads a file and counts the number of lines in it.
+func countLinesInFile(filepath string) int {
+	bytes, err := os.ReadFile(filepath)
+	if err != nil {
+		return 0
+	}
+	return countLines(string(bytes))
+}
+
+// countLines counts the number of lines in a given string content, treating
+// non-empty lines without a trailing newline as a line as well.
+func countLines(content string) int {
+	if len(content) == 0 {
+		return 0
+	}
+	n := strings.Count(content, "\n")
+	if !strings.HasSuffix(content, "\n") {
+		n++
+	}
+	return n
+}
+
+// handleShowDefinition looks up a function in the environment and either prints
+// its definition's first line or opens the corresponding file in an editor at the definition line.
+func handleShowDefinition(env *ast.Env, funcName string, openInEditor bool) {
+	if funcName == "" {
+		fmt.Println("Usage: ?FUNCTION to show definition, ??FUNCTION to open in editor")
+		return
+	}
+
+	val, ok := env.Lookup(funcName)
+	if !ok {
+		switch funcName {
+		case "hd", "tl", "show", "read", "lines", "numval", "length", "reverse":
+			fmt.Printf("Built-in function: %s\n", funcName)
+			return
+		}
+		fmt.Printf("Function '%s' not found.\n", funcName)
+		return
+	}
+
+	key := ast.GetNodeKey(val)
+	posVal, found := ast.NodePositions.Load(key)
+	if !found {
+		fmt.Printf("Position info for '%s' not found.\n", funcName)
+		return
+	}
+
+	pos, ok := posVal.(ast.Position)
+	if !ok {
+		fmt.Printf("Invalid position info for '%s'.\n", funcName)
+		return
+	}
+
+	if pos.Filename == "" {
+		fmt.Printf("Function '%s' is defined at line %d, but the source file is unknown.\n", funcName, pos.Line)
+		return
+	}
+
+	resolvedFile := ExpandHome(pos.Filename)
+
+	if !openInEditor {
+		bytes, err := os.ReadFile(resolvedFile)
+		if err != nil {
+			fmt.Printf("Error reading source file %s: %v\n", pos.Filename, err)
+			return
+		}
+		lines := strings.Split(string(bytes), "\n")
+		if pos.Line < 1 || pos.Line > len(lines) {
+			fmt.Printf("Function '%s' is defined at %s:%d, but file has only %d lines.\n", funcName, pos.Filename, pos.Line, len(lines))
+			return
+		}
+		lineContent := strings.TrimRightFunc(lines[pos.Line-1], unicode.IsSpace)
+		fmt.Printf("%s:%d: %s\n", pos.Filename, pos.Line, lineContent)
+		return
+	}
+
+	editor := "./mica"
+	if _, err := os.Stat(editor); err != nil {
+		editor = "vi"
+	}
+	var cmd *exec.Cmd
+	fmt.Printf("Opening %s %s at line %d ...\n", editor, pos.Filename, pos.Line)
+	if editor == "./mica" {
+		cmd = exec.Command(editor, resolvedFile, strconv.Itoa(pos.Line), "1")
+	} else {
+		cmd = exec.Command(editor, fmt.Sprintf("+%d", pos.Line), resolvedFile)
+	}
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	_ = cmd.Run()
+}
+
+// getManualContent reads the project's Miracula manual file miracula-man.md.
+func getManualContent() string {
+	manBytes, err := os.ReadFile("miracula-man.md")
+	if err != nil {
+		manBytes, err = os.ReadFile("/Users/pkreyenhop/src/miracula-go/miracula-man.md")
+	}
+
+	if err != nil {
+		return "miracula-man.md not found.\n"
+	}
+	return string(manBytes)
+}
+
+// handleOpenManual displays the unified manual content using the Unix 'more' command.
+func handleOpenManual() {
+	content := getManualContent()
+
+	tempFile := filepath.Join(os.TempDir(), "miracula_manual.txt")
+	err := os.WriteFile(tempFile, []byte(content), 0644)
+	if err != nil {
+		fmt.Printf("Error creating manual file: %v\n", err)
+		return
+	}
+	defer os.Remove(tempFile)
+
+	cmd := exec.Command("more", tempFile)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	_ = cmd.Run()
+}
+
+// handleShellCommand executes a command line directly in the Unix shell (sh -c).
+func handleShellCommand(line string) {
+	cmdText := strings.TrimSpace(strings.TrimPrefix(line, "!"))
+	if cmdText == "" {
+		fmt.Println("Usage: !command to execute a shell command")
+		return
+	}
+
+	cmd := exec.Command("sh", "-c", cmdText)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	_ = cmd.Run()
+}
+
+// EvaluateAndExit evaluates a FILE or a COMMAND and exits.
+func EvaluateAndExit(env *ast.Env, typeEnv *typecheck.TypeEnv, parameter string, showResult, showTiming bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			if rtErr, ok := r.(ast.RuntimeError); ok {
+				if strings.HasPrefix(rtErr.Msg, "Type Error:") {
+					fmt.Println(rtErr.Msg)
+				} else {
+					fmt.Printf("Runtime Error: %s\n", rtErr.Msg)
+				}
+			} else if bhErr, ok := r.(ast.BlackholeError); ok {
+				fmt.Printf("Runtime Error: %s\n", bhErr.Msg)
+			} else if pe, ok := r.(parser.ParseError); ok {
+				fmt.Println(FormatParseError("<stdin>", parameter, pe))
+			} else {
+				fmt.Printf("Error: %v\n", r)
+			}
+			os.Exit(1)
+		}
+	}()
+
+	info, err := os.Stat(parameter)
+	isFile := err == nil && !info.IsDir()
+
+	if isFile {
+		nextEnv, nextTypeEnv, err := LoadScriptFile(parameter, env, typeEnv)
+		if err != nil {
+			fmt.Printf("Error loading %s: %v\n", parameter, err)
+			os.Exit(1)
+		}
+		env = nextEnv
+		typeEnv = nextTypeEnv
+
+		mainVal, ok := env.Lookup("main")
+		if !ok {
+			fmt.Printf("Error: 'main' is not defined in %s\n", parameter)
+			os.Exit(1)
+		}
+
+		startTime := time.Now()
+		result := eval.Whnf(env, mainVal)
+		sVal, isStr := eval.IsString(env, result)
+		var output string
+		if isStr {
+			output = sVal
+		} else {
+			output = eval.PrintNode(env, result)
+		}
+		duration := time.Since(startTime).Milliseconds()
+
+		if showResult {
+			if isStr {
+				fmt.Printf("Result:\n%s", output)
+				if len(output) > 0 && output[len(output)-1] == '\n' {
+					// no extra newline
+				} else {
+					fmt.Println()
+				}
+			} else {
+				fmt.Printf("Result: %s\n", output)
+			}
+		}
+		if showTiming {
+			fmt.Printf("Evaluation time: %d ms\n", duration)
+		}
+		os.Exit(0)
+	} else {
+		tokens := lexer.TokenizeWithPos(parameter, 1)
+		var filtered []lexer.Token
+		for _, t := range tokens {
+			if t.Type != lexer.TOK_EOF {
+				filtered = append(filtered, t)
+			}
+		}
+
+		var layoutLines []lexer.LayoutLine
+		layoutLines = append(layoutLines, lexer.LayoutLine{Indent: 0, Toks: lexer.WrapWhereOnLine(filtered)})
+		fileTokens := lexer.ApplyLayout(layoutLines)
+		segments := lexer.SplitTokens(fileTokens)
+		if len(segments) == 0 {
+			os.Exit(0)
+		}
+
+		p := parser.NewParser(segments[0]).WithFilename("<stdin>")
+		stmt := p.Parse()
+
+		switch s := stmt.(type) {
+		case parser.REPLEvalStmt:
+			tc := typecheck.NewTypeChecker()
+			_, _, err := tc.Infer(typeEnv, s.Expr, nil)
+			if err != nil {
+				fmt.Printf("Type Error: %v\n", err)
+				os.Exit(1)
+			}
+
+			startTime := time.Now()
+			result := eval.Whnf(env, s.Expr)
+			sVal, isStr := eval.IsString(env, result)
+			var output string
+			if isStr {
+				output = sVal
+			} else {
+				output = eval.PrintNode(env, result)
+			}
+			duration := time.Since(startTime).Milliseconds()
+
+			if showResult {
+				if isStr {
+					fmt.Printf("Result:\n%s", output)
+					if len(output) > 0 && output[len(output)-1] == '\n' {
+						// no extra newline
+					} else {
+						fmt.Println()
+					}
+				} else {
+					fmt.Printf("Result: %s\n", output)
+				}
+			}
+			if showTiming {
+				fmt.Printf("Evaluation time: %d ms\n", duration)
+			}
+			os.Exit(0)
+		default:
+			fmt.Printf("Error: not an evaluation expression\n")
+			os.Exit(1)
+		}
+	}
+}
+

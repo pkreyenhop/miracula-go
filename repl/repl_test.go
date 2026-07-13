@@ -1,7 +1,9 @@
 package repl
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -251,5 +253,135 @@ func TestErrorTracking(t *testing.T) {
 	}
 	if lastErrorCol != 5 {
 		t.Errorf("Expected lastErrorCol to be 5 for parse error (at +), got %d", lastErrorCol)
+	}
+}
+
+func TestExpandHome(t *testing.T) {
+	origHome, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("Skipping TestExpandHome: user home dir not available")
+	}
+
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"~", origHome},
+		{"~/foo", filepath.Join(origHome, "foo")},
+		{"~/.script.m", filepath.Join(origHome, ".script.m")},
+		{"/absolute/path", "/absolute/path"},
+		{"relative/path", "relative/path"},
+	}
+
+	for _, tt := range tests {
+		res := ExpandHome(tt.input)
+		if res != tt.expected {
+			t.Errorf("ExpandHome(%q) = %q, expected %q", tt.input, res, tt.expected)
+		}
+	}
+}
+
+func TestCountLines(t *testing.T) {
+	tests := []struct {
+		content  string
+		expected int
+	}{
+		{"", 0},
+		{"hello", 1},
+		{"hello\n", 1},
+		{"hello\nworld", 2},
+		{"hello\nworld\n", 2},
+	}
+
+	for _, tt := range tests {
+		res := countLines(tt.content)
+		if res != tt.expected {
+			t.Errorf("countLines(%q) = %d, expected %d", tt.content, res, tt.expected)
+		}
+	}
+}
+
+func TestHandleShowDefinition(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "miracula-lookup-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	filePath := filepath.Join(tmpDir, "source.m")
+	fileContent := "add x y = x + y\nsub x y = x - y\n"
+	if err := os.WriteFile(filePath, []byte(fileContent), 0644); err != nil {
+		t.Fatalf("Failed to write temp source file: %v", err)
+	}
+
+	env := ast.NewEnv()
+	nodeAdd := ast.IntNode{Val: 1}
+	nodeSub := ast.IntNode{Val: 2}
+
+	env = env.Extend("add", nodeAdd)
+	env = env.Extend("sub", nodeSub)
+
+	boxedAdd, _ := env.Lookup("add")
+	boxedSub, _ := env.Lookup("sub")
+
+	ast.NodePositions.Store(ast.GetNodeKey(boxedAdd), ast.Position{Filename: filePath, Line: 1, Col: 1})
+	ast.NodePositions.Store(ast.GetNodeKey(boxedSub), ast.Position{Filename: filePath, Line: 2, Col: 1})
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	handleShowDefinition(env, "add", false)
+	handleShowDefinition(env, "sub", false)
+	handleShowDefinition(env, "missing", false)
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	output := buf.String()
+
+	expectedAdd := fmt.Sprintf("%s:1: add x y = x + y", filePath)
+	expectedSub := fmt.Sprintf("%s:2: sub x y = x - y", filePath)
+	expectedMissing := "Function 'missing' not found."
+
+	if !strings.Contains(output, expectedAdd) {
+		t.Errorf("Expected output to contain %q, got:\n%s", expectedAdd, output)
+	}
+	if !strings.Contains(output, expectedSub) {
+		t.Errorf("Expected output to contain %q, got:\n%s", expectedSub, output)
+	}
+	if !strings.Contains(output, expectedMissing) {
+		t.Errorf("Expected output to contain %q, got:\n%s", expectedMissing, output)
+	}
+}
+
+func TestGetManualContent(t *testing.T) {
+	content := getManualContent()
+	if !strings.Contains(content, "Miracula System Manual") {
+		t.Errorf("Expected manual content to contain 'Miracula System Manual'")
+	}
+	if !strings.Contains(content, "How to use") {
+		t.Errorf("Expected manual content to contain 'How to use'")
+	}
+}
+
+func TestHandleShellCommand(t *testing.T) {
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	handleShellCommand("!echo hello shell command")
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	output := buf.String()
+
+	if !strings.Contains(output, "hello shell command") {
+		t.Errorf("Expected output to contain 'hello shell command', got %q", output)
 	}
 }

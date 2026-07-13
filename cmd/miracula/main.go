@@ -12,6 +12,33 @@ import (
 
 func main() {
 	cpuprofile := flag.String("cpuprofile", "", "write cpu profile to `file`")
+	execX := flag.String("x", "", "evaluate FILE or COMMAND and exit")
+	execT := flag.String("t", "", "evaluate FILE or COMMAND and exit")
+	execXT := flag.String("xt", "", "evaluate FILE or COMMAND and exit with timing info")
+
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage of miracula:\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  miracula [flags] [script_file]\n\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "Flags:\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  -cpuprofile string\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "    \twrite cpu profile to file\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  -x string\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "    \tevaluate FILE or COMMAND and print result only\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  -t string\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "    \tevaluate FILE or COMMAND and print evaluation time only\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  -xt string\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "    \tevaluate FILE or COMMAND and print both result and evaluation time\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  -h, -?, --help\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "    \tshow this help message\n")
+	}
+
+	for _, arg := range os.Args[1:] {
+		if arg == "-?" || arg == "-h" || arg == "--help" {
+			flag.Usage()
+			os.Exit(0)
+		}
+	}
+
 	flag.Parse()
 
 	if *cpuprofile != "" {
@@ -29,39 +56,57 @@ func main() {
 	}
 
 	args := flag.Args()
-	scriptFile := "script.m"
+	scriptFile := "~/.script.m"
 	if len(args) == 1 {
 		scriptFile = args[0]
 	} else if len(args) > 1 {
-		fmt.Println("Usage: miracula [-cpuprofile=file] [script_file]")
+		fmt.Println("Usage: miracula [-cpuprofile=file] [-x|-t|-xt file/command] [script_file]")
 		os.Exit(1)
 	}
 
-	isReplMode := scriptFile == "script.m"
+	isReplMode := len(args) == 0
 
 	env := ast.NewEnv()
 	typeEnv := typecheck.DefaultTypeEnv()
-	var err error
-	stdenvEnv, stdenvTypeEnv, err := repl.LoadScriptFile("stdenv.m", env, typeEnv)
-	if err != nil {
+
+	if nextEnv, nextTypeEnv, err := repl.LoadScriptFile("stdenv.m", env, typeEnv); err != nil {
 		fmt.Printf("Error loading stdenv.m: %v\n", err)
 		os.Exit(1)
-	}
-	env = stdenvEnv
-	typeEnv = stdenvTypeEnv
-
-	scriptEnv, scriptTypeEnv, err := repl.LoadScriptFile(scriptFile, env, typeEnv)
-	if err != nil {
-		fmt.Printf("Error loading %s: %v\n", scriptFile, err)
 	} else {
-		env = scriptEnv
-		typeEnv = scriptTypeEnv
+		env = nextEnv
+		typeEnv = nextTypeEnv
+	}
+
+	if nextEnv, nextTypeEnv, err := repl.LoadScriptFile("~/.script.m", env, typeEnv); err != nil {
+		fmt.Printf("Error loading ~/.script.m: %v\n", err)
+	} else {
+		env = nextEnv
+		typeEnv = nextTypeEnv
+	}
+
+	if *execXT != "" {
+		repl.EvaluateAndExit(env, typeEnv, *execXT, true, true)
+	}
+	if *execX != "" {
+		repl.EvaluateAndExit(env, typeEnv, *execX, true, false)
+	}
+	if *execT != "" {
+		repl.EvaluateAndExit(env, typeEnv, *execT, false, true)
+	}
+
+	if repl.ExpandHome(scriptFile) != repl.ExpandHome("~/.script.m") {
+		if nextEnv, nextTypeEnv, err := repl.LoadScriptFile(scriptFile, env, typeEnv); err != nil {
+			fmt.Printf("Error loading %s: %v\n", scriptFile, err)
+		} else {
+			env = nextEnv
+			typeEnv = nextTypeEnv
+		}
 	}
 
 	if isReplMode {
 		fmt.Println("==================================================")
 		fmt.Println(" Environment-Sharing Go REPL                     ")
-		fmt.Println(" Use '/e' to edit script.m, '/q' to exit          ")
+		fmt.Println(" Use '/e' to edit ~/.script.m, '/q' to exit       ")
 		fmt.Println("==================================================")
 	} else {
 		fmt.Println("==================================================")

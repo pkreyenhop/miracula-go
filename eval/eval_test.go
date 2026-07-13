@@ -113,3 +113,33 @@ func TestBuiltins(t *testing.T) {
 		t.Errorf("Expected hd [1..5] = 1, got %v", res)
 	}
 }
+
+func TestInterruption(t *testing.T) {
+	// 1. Initially interrupted should be false
+	SetInterrupted(false)
+	if IsInterrupted() {
+		t.Errorf("Expected IsInterrupted() to be false initially")
+	}
+
+	// 2. Set interrupted to true
+	SetInterrupted(true)
+	if !IsInterrupted() {
+		t.Errorf("Expected IsInterrupted() to be true after setting it to true")
+	}
+
+	// 3. Running Whnf should panic with InterruptedException
+	defer func() {
+		if r := recover(); r != nil {
+			if _, ok := r.(InterruptedException); !ok {
+				t.Errorf("Expected panic of type InterruptedException, got: %T (%v)", r, r)
+			}
+		} else {
+			t.Errorf("Expected Whnf to panic, but it returned successfully")
+		}
+		SetInterrupted(false)
+	}()
+
+	env := ast.NewEnv()
+	node := ast.IntNode{Val: 42}
+	_ = Whnf(env, node)
+}

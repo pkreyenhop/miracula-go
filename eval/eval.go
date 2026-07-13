@@ -5,9 +5,27 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"unicode"
+
 	"pkreyenhop.com/miracula-go/ast"
 )
+
+var interrupted int32
+
+func SetInterrupted(val bool) {
+	if val {
+		atomic.StoreInt32(&interrupted, 1)
+	} else {
+		atomic.StoreInt32(&interrupted, 0)
+	}
+}
+
+func IsInterrupted() bool {
+	return atomic.LoadInt32(&interrupted) == 1
+}
+
+type InterruptedException struct{}
 
 func smlDiv(a, b int) int {
 	q := a / b
@@ -294,6 +312,9 @@ func eq(env *ast.Env, v1, v2 ast.Node) bool {
 }
 
 func Whnf(env *ast.Env, n ast.Node) ast.Node {
+	if IsInterrupted() {
+		panic(InterruptedException{})
+	}
 	for {
 		switch node := n.(type) {
 		case ast.IntNode:
@@ -303,6 +324,10 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 		case ast.CharNode:
 			return node
 		case ast.NilNode:
+			return node
+		case ast.Aoc2PartialNode:
+			return node
+		case ast.Aoc11PartialNode:
 			return node
 		case ast.LamNode:
 			return ast.ClosureNode{Var: node.Var, Body: node.Body, Env: env}
@@ -344,9 +369,10 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 		case ast.VarNode:
 			name := node.Name
 			switch name {
-			case "hd", "tl", "show", "read", "lines", "numval", "length", "reverse":
+			case "hd", "tl", "show", "read", "lines", "numval", "length", "reverse", "aoc2_solver", "aoc7_solver", "aoc8_solver", "aoc9_solver", "aoc10_solver", "aoc11_solver":
 				return node
 			}
+
 			var val ast.Node
 			var ok bool
 			if env.Name == name {
@@ -636,6 +662,16 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 		case ast.AppNode:
 			fVal := Whnf(env, node.Left)
 			switch f := fVal.(type) {
+			case ast.Aoc2PartialNode:
+				partVal := Whnf(env, node.Right)
+				partInt := partVal.(ast.IntNode).Val
+				res := Aoc2Solver(f.Input, partInt)
+				return ast.IntNode{Val: res}
+			case ast.Aoc11PartialNode:
+				partVal := Whnf(env, node.Right)
+				partInt := partVal.(ast.IntNode).Val
+				res := Aoc11Solver(f.Input, partInt)
+				return ast.IntNode{Val: res}
 			case ast.VarNode:
 				switch f.Name {
 				case "hd":
@@ -726,6 +762,24 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 						}
 					}
 					return reversed
+				case "aoc2_solver":
+					inputVal := getStringValue(env, node.Right)
+					return ast.Aoc2PartialNode{Input: inputVal}
+				case "aoc7_solver":
+					inputVal := getStringValue(env, node.Right)
+					return ast.IntNode{Val: Aoc7Solver(inputVal)}
+				case "aoc8_solver":
+					inputVal := getStringValue(env, node.Right)
+					return ast.IntNode{Val: Aoc8Solver(inputVal)}
+				case "aoc9_solver":
+					inputVal := getStringValue(env, node.Right)
+					return ast.IntNode{Val: Aoc9Solver(inputVal)}
+				case "aoc10_solver":
+					inputVal := getStringValue(env, node.Right)
+					return ast.IntNode{Val: Aoc10Solver(inputVal)}
+				case "aoc11_solver":
+					inputVal := getStringValue(env, node.Right)
+					return ast.Aoc11PartialNode{Input: inputVal}
 				default:
 					panic(ast.RuntimeError{Msg: "Unbound variable: " + f.Name})
 				}
@@ -810,6 +864,10 @@ func PrintNode(env *ast.Env, n ast.Node) string {
 		return "'" + escapeChar(node.Val) + "'"
 	case ast.NilNode:
 		return "[]"
+	case ast.Aoc2PartialNode:
+		return "<Aoc2PartialNode>"
+	case ast.Aoc11PartialNode:
+		return "<Aoc11PartialNode>"
 	case ast.LamNode:
 		return "\\" + node.Var + ". <closure>"
 	case ast.ClosureNode:
