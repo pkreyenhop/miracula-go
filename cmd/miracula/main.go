@@ -64,6 +64,12 @@ func main() {
 		}()
 		defer pprof.StopCPUProfile()
 		defer f.Close()
+		// EvaluateAndExit terminates via os.Exit, which skips the defers
+		// above — flush the profile through the REPL exit hook instead.
+		repl.OnExit = func() {
+			pprof.StopCPUProfile()
+			f.Close()
+		}
 	}
 
 	args := flag.Args()

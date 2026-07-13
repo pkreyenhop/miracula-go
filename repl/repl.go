@@ -1078,6 +1078,17 @@ func handleShellCommand(line string) {
 }
 
 // EvaluateAndExit evaluates a FILE or a COMMAND and exits.
+// OnExit, when set, runs before EvaluateAndExit terminates the process —
+// main uses it to flush the CPU profile, which os.Exit would otherwise skip.
+var OnExit func()
+
+func exitWith(code int) {
+	if OnExit != nil {
+		OnExit()
+	}
+	os.Exit(code)
+}
+
 func EvaluateAndExit(env *ast.Env, typeEnv *typecheck.TypeEnv, parameter string, showResult, showTiming bool) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -1094,7 +1105,7 @@ func EvaluateAndExit(env *ast.Env, typeEnv *typecheck.TypeEnv, parameter string,
 			} else {
 				fmt.Printf("Error: %v\n", r)
 			}
-			os.Exit(1)
+			exitWith(1)
 		}
 	}()
 
@@ -1105,7 +1116,7 @@ func EvaluateAndExit(env *ast.Env, typeEnv *typecheck.TypeEnv, parameter string,
 		nextEnv, nextTypeEnv, err := LoadScriptFile(parameter, env, typeEnv)
 		if err != nil {
 			fmt.Printf("Error loading %s: %v\n", parameter, err)
-			os.Exit(1)
+			exitWith(1)
 		}
 		env = nextEnv
 		typeEnv = nextTypeEnv
@@ -1113,7 +1124,7 @@ func EvaluateAndExit(env *ast.Env, typeEnv *typecheck.TypeEnv, parameter string,
 		mainVal, ok := env.Lookup("main")
 		if !ok {
 			fmt.Printf("Error: 'main' is not defined in %s\n", parameter)
-			os.Exit(1)
+			exitWith(1)
 		}
 
 		startTime := time.Now()
@@ -1142,7 +1153,7 @@ func EvaluateAndExit(env *ast.Env, typeEnv *typecheck.TypeEnv, parameter string,
 		if showTiming {
 			fmt.Printf("Evaluation time: %d ms\n", duration)
 		}
-		os.Exit(0)
+		exitWith(0)
 	} else {
 		tokens := lexer.TokenizeWithPos(parameter, 1)
 		var filtered []lexer.Token
@@ -1157,7 +1168,7 @@ func EvaluateAndExit(env *ast.Env, typeEnv *typecheck.TypeEnv, parameter string,
 		fileTokens := lexer.ApplyLayout(layoutLines)
 		segments := lexer.SplitTokens(fileTokens)
 		if len(segments) == 0 {
-			os.Exit(0)
+			exitWith(0)
 		}
 
 		p := parser.NewParser(segments[0]).WithFilename("<stdin>")
@@ -1169,7 +1180,7 @@ func EvaluateAndExit(env *ast.Env, typeEnv *typecheck.TypeEnv, parameter string,
 			_, _, err := tc.Infer(typeEnv, s.Expr, nil)
 			if err != nil {
 				fmt.Printf("Type Error: %v\n", err)
-				os.Exit(1)
+				exitWith(1)
 			}
 
 			startTime := time.Now()
@@ -1198,10 +1209,10 @@ func EvaluateAndExit(env *ast.Env, typeEnv *typecheck.TypeEnv, parameter string,
 			if showTiming {
 				fmt.Printf("Evaluation time: %d ms\n", duration)
 			}
-			os.Exit(0)
+			exitWith(0)
 		default:
 			fmt.Printf("Error: not an evaluation expression\n")
-			os.Exit(1)
+			exitWith(1)
 		}
 	}
 }

@@ -735,33 +735,70 @@ func whnfCore(env *ast.Env, n ast.Node, pending *[]*ast.ThunkCell) ast.Node {
 	}
 }
 
-// stepZFGenerator advances a list-comprehension generator by one source
-// element and returns the node the trampoline should evaluate next.
+// stepZFGenerator advances a list-comprehension generator until it can
+// yield an element (or exhausts its source) and returns the node the
+// trampoline should evaluate next. Source elements that fail the pattern
+// match or a directly following filter qualifier are skipped in this loop
+// without allocating generator/append/conditional machinery for them, and
+// a yielded element conses straight onto the advanced generator instead of
+// going through a per-element AppendNode.
 func stepZFGenerator(node ast.ZFGeneratorNode) ast.Node {
-	srcVal := Whnf(node.ZFEnv, node.Src)
-	switch s := srcVal.(type) {
-	case ast.NilNode:
-		return ast.NilNode{}
-	case ast.ConsNode:
-		matchRes, matchOk := matchPattern(node.ZFEnv, node.Pat, s.Head)
-		nextGen := ast.ZFGeneratorNode{
-			Pat:   node.Pat,
-			Rest:  node.Rest,
-			Src:   s.Tail,
-			Body:  node.Body,
-			ZFEnv: node.ZFEnv,
+	src := node.Src
+	for {
+		srcVal := Whnf(node.ZFEnv, src)
+		switch s := srcVal.(type) {
+		case ast.NilNode:
+			return ast.NilNode{}
+		case ast.ConsNode:
+			matchRes, matchOk := matchPattern(node.ZFEnv, node.Pat, s.Head)
+			if !matchOk {
+				src = s.Tail
+				continue
+			}
+			extendedEnv := node.ZFEnv
+			for _, b := range matchRes {
+				extendedEnv = extendedEnv.Extend(b.Name, b.Val)
+			}
+			// evaluate filter qualifiers that directly follow this
+			// generator eagerly; on failure move to the next element
+			rest := node.Rest
+			passed := true
+			for len(rest) > 0 {
+				fq, isFilter := rest[0].(ast.FilterQual)
+				if !isFilter {
+					break
+				}
+				if !isTrueNode(Whnf(extendedEnv, fq.Cond)) {
+					passed = false
+					break
+				}
+				rest = rest[1:]
+			}
+			if !passed {
+				src = s.Tail
+				continue
+			}
+			nextGen := ast.ZFGeneratorNode{
+				Pat:   node.Pat,
+				Rest:  node.Rest,
+				Src:   s.Tail,
+				Body:  node.Body,
+				ZFEnv: node.ZFEnv,
+			}
+			if len(rest) == 0 {
+				// only filters followed: yield exactly one element
+				h := node.Body
+				if needsThunkCons(h) {
+					h = ast.ThunkNode{Cell: &ast.ThunkCell{State: ast.Unevaluated, Expr: node.Body, Env: extendedEnv}}
+				}
+				return ast.ConsNode{Head: h, Tail: nextGen}
+			}
+			// a nested generator follows: splice its results in front
+			firstList := evalZF(extendedEnv, node.Body, rest)
+			return ast.AppendNode{Left: firstList, Right: nextGen}
+		default:
+			panic(ast.RuntimeError{Msg: "Generator source must be a list"})
 		}
-		if !matchOk {
-			return nextGen
-		}
-		extendedEnv := node.ZFEnv
-		for _, b := range matchRes {
-			extendedEnv = extendedEnv.Extend(b.Name, b.Val)
-		}
-		firstList := evalZF(extendedEnv, node.Body, node.Rest)
-		return ast.AppendNode{Left: firstList, Right: nextGen}
-	default:
-		panic(ast.RuntimeError{Msg: "Generator source must be a list"})
 	}
 }
 
@@ -1093,12 +1130,16 @@ func applyBuiltin(env *ast.Env, name string, node ast.AppNode) ast.Node {
 		return listNode
 	case "sort_edges":
 		listVal := Whnf(env, node.Right)
-		var elems []ast.Node
+		// decorate-sort-undecorate: force each element's key exactly once
+		// instead of re-forcing thunks in every comparison
+		var elems []keyedNode
 		curr := listVal
 		for {
 			lVal := Whnf(env, curr)
 			if cons, ok := lVal.(ast.ConsNode); ok {
-				elems = append(elems, cons.Head)
+				t := Whnf(env, cons.Head).(ast.TupleNode)
+				key := Whnf(env, t.Elems[2]).(ast.IntNode).Val
+				elems = append(elems, keyedNode{Key: key, Node: cons.Head})
 				curr = cons.Tail
 			} else if _, ok := lVal.(ast.NilNode); ok {
 				break
@@ -1106,32 +1147,18 @@ func applyBuiltin(env *ast.Env, name string, node ast.AppNode) ast.Node {
 				panic(ast.RuntimeError{Msg: "sort_edges expects a list"})
 			}
 		}
-		slices.SortFunc(elems, func(a, b ast.Node) int {
-			aT := Whnf(env, a).(ast.TupleNode)
-			bT := Whnf(env, b).(ast.TupleNode)
-			d1 := Whnf(env, aT.Elems[2]).(ast.IntNode).Val
-			d2 := Whnf(env, bT.Elems[2]).(ast.IntNode).Val
-			if d1 < d2 {
-				return -1
-			}
-			if d1 > d2 {
-				return 1
-			}
-			return 0
-		})
-		var listNode ast.Node = ast.NilNode{}
-		for i := len(elems) - 1; i >= 0; i-- {
-			listNode = ast.ConsNode{Head: elems[i], Tail: listNode}
-		}
-		return listNode
+		return sortKeyedToList(elems)
 	case "sort_pts":
 		listVal := Whnf(env, node.Right)
-		var elems []ast.Node
+		var elems []keyedNode
 		curr := listVal
 		for {
 			lVal := Whnf(env, curr)
 			if cons, ok := lVal.(ast.ConsNode); ok {
-				elems = append(elems, cons.Head)
+				t := Whnf(env, cons.Head).(ast.TupleNode)
+				coords := Whnf(env, t.Elems[1]).(ast.TupleNode)
+				key := Whnf(env, coords.Elems[0]).(ast.IntNode).Val
+				elems = append(elems, keyedNode{Key: key, Node: cons.Head})
 				curr = cons.Tail
 			} else if _, ok := lVal.(ast.NilNode); ok {
 				break
@@ -1139,26 +1166,7 @@ func applyBuiltin(env *ast.Env, name string, node ast.AppNode) ast.Node {
 				panic(ast.RuntimeError{Msg: "sort_pts expects a list"})
 			}
 		}
-		slices.SortFunc(elems, func(a, b ast.Node) int {
-			aT := Whnf(env, a).(ast.TupleNode)
-			bT := Whnf(env, b).(ast.TupleNode)
-			aCoords := Whnf(env, aT.Elems[1]).(ast.TupleNode)
-			bCoords := Whnf(env, bT.Elems[1]).(ast.TupleNode)
-			x1 := Whnf(env, aCoords.Elems[0]).(ast.IntNode).Val
-			x2 := Whnf(env, bCoords.Elems[0]).(ast.IntNode).Val
-			if x1 < x2 {
-				return -1
-			}
-			if x1 > x2 {
-				return 1
-			}
-			return 0
-		})
-		var listNode ast.Node = ast.NilNode{}
-		for i := len(elems) - 1; i >= 0; i-- {
-			listNode = ast.ConsNode{Head: elems[i], Tail: listNode}
-		}
-		return listNode
+		return sortKeyedToList(elems)
 	case "sort_by":
 		cmpNode := Whnf(env, node.Right)
 		return ast.SortByPartialNode{Cmp: cmpNode}
@@ -1453,6 +1461,31 @@ func DebugPrintNode(n ast.Node) string {
 	default:
 		return fmt.Sprintf("%T", n)
 	}
+}
+
+// keyedNode pairs a list element with its pre-extracted integer sort key so
+// native sorts compare plain int64s instead of re-forcing thunks per
+// comparison (decorate-sort-undecorate).
+type keyedNode struct {
+	Key  int64
+	Node ast.Node
+}
+
+func sortKeyedToList(elems []keyedNode) ast.Node {
+	slices.SortFunc(elems, func(a, b keyedNode) int {
+		if a.Key < b.Key {
+			return -1
+		}
+		if a.Key > b.Key {
+			return 1
+		}
+		return 0
+	})
+	var listNode ast.Node = ast.NilNode{}
+	for i := len(elems) - 1; i >= 0; i-- {
+		listNode = ast.ConsNode{Head: elems[i].Node, Tail: listNode}
+	}
+	return listNode
 }
 
 func getIntSlice(env *ast.Env, n ast.Node) []int64 {
