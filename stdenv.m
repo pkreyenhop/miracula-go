@@ -1,7 +1,10 @@
 || string == [char]
 
+|| strict in the accumulator (via seq) so long folds run in constant space
 foldl f z []     = z
-foldl f z (x:xs) = foldl f (f z x) xs
+foldl f z (x:xs) = seq z2 (foldl f z2 xs)
+                   where
+                   z2 = f z x
 
 converse f a b = f b a
 

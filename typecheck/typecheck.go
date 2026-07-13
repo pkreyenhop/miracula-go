@@ -901,6 +901,7 @@ func DefaultTypeEnv() *TypeEnv {
 	env.Map["lines"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TChar}, To: ListType{Elem: ListType{Elem: TChar}}}}
 	env.Map["numval"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TChar}, To: TInt}}
 	env.Map["length"] = Scheme{Vars: []int{0}, Ty: FunType{From: ListType{Elem: VarType{Id: 0}}, To: TInt}}
+	env.Map["seq"] = Scheme{Vars: []int{0, 1}, Ty: FunType{From: VarType{Id: 0}, To: FunType{From: VarType{Id: 1}, To: VarType{Id: 1}}}}
 	env.Map["reverse"] = Scheme{Vars: []int{0}, Ty: FunType{From: ListType{Elem: VarType{Id: 0}}, To: ListType{Elem: VarType{Id: 0}}}}
 
 	env.Map["h_lookup"] = Scheme{Vars: []int{0, 1}, Ty: FunType{From: MapType{Key: VarType{Id: 0}, Val: VarType{Id: 1}}, To: FunType{From: VarType{Id: 0}, To: VarType{Id: 1}}}}

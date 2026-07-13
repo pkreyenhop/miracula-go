@@ -53,6 +53,28 @@ func needsThunkCons(n ast.Node) bool {
 	return true
 }
 
+// bindArg prepares a function argument for binding into the callee
+// environment. Values already in WHNF pass through unchanged, and an
+// argument that is just a variable reference passes its existing local
+// binding through instead of allocating a fresh indirection thunk —
+// repeated re-thunking otherwise builds arbitrarily deep thunk chains
+// (e.g. an accumulator threaded through a long tail-recursive loop).
+func bindArg(env *ast.Env, arg ast.Node) ast.Node {
+	switch r := arg.(type) {
+	case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.ThunkNode, ast.MatchErrorNode:
+		return r
+	case ast.LamNode:
+		return ast.ClosureNode{Var: r.Var, Body: r.Body, Env: env}
+	case ast.VarNode:
+		for curr := env; curr != nil; curr = curr.Parent {
+			if curr.Name == r.Name {
+				return curr.Val
+			}
+		}
+	}
+	return ast.ThunkNode{Cell: &ast.ThunkCell{State: ast.Unevaluated, Expr: arg, Env: env}}
+}
+
 func needsThunkTuple(n ast.Node) bool {
 	switch n.(type) {
 	case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ThunkNode, ast.ClosureNode, ast.MatchErrorNode:
@@ -174,17 +196,11 @@ func getMapKey(env *ast.Env, node ast.Node) string {
 
 func MakeStringNode(s string) ast.Node {
 	runes := []rune(s)
-	var makeList func([]rune) ast.Node
-	makeList = func(rs []rune) ast.Node {
-		if len(rs) == 0 {
-			return ast.NilNode{}
-		}
-		return ast.ConsNode{
-			Head: ast.CharNode{Val: rs[0]},
-			Tail: makeList(rs[1:]),
-		}
+	var listNode ast.Node = ast.NilNode{}
+	for i := len(runes) - 1; i >= 0; i-- {
+		listNode = ast.ConsNode{Head: ast.CharNode{Val: runes[i]}, Tail: listNode}
 	}
-	return makeList(runes)
+	return listNode
 }
 
 func splitLines(s string) []string {
@@ -346,6 +362,8 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 			return node
 		case ast.MemberPartialNode:
 			return node
+		case ast.SeqPartialNode:
+			return node
 		case ast.SplitPartialNode:
 			return node
 		case ast.ListGetPartialNode:
@@ -402,7 +420,7 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 		case ast.VarNode:
 			name := node.Name
 			switch name {
-			case "hd", "tl", "show", "read", "lines", "numval", "length", "reverse", "h_lookup", "h_insert", "member", "split", "parse_ints", "list_get", "list_set", "memoize", "sort_by", "sort_ints", "sort_edges", "sort_pts", "h_lookup_def":
+			case "hd", "tl", "show", "read", "lines", "numval", "length", "reverse", "seq", "h_lookup", "h_insert", "member", "split", "parse_ints", "list_get", "list_set", "memoize", "sort_by", "sort_ints", "sort_edges", "sort_pts", "h_lookup_def":
 				return node
 			case "empty_map":
 				return ast.MapNode{Map: make(map[string]ast.Node)}
@@ -412,14 +430,23 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 
 			var val ast.Node
 			var ok bool
-			if env.Name == name {
-				val = env.Val
-				ok = true
-			} else if env.Parent != nil && env.Parent.Name == name {
-				val = env.Parent.Val
-				ok = true
-			} else {
-				val, ok = env.Lookup(name)
+			for curr := env; curr != nil; curr = curr.Parent {
+				if curr.Name == name {
+					val = curr.Val
+					ok = true
+					break
+				}
+			}
+			if !ok && env.Globals != nil {
+				if gv, gok := env.Globals[name]; gok {
+					// Globals are closed terms over the global scope: evaluate
+					// them in a globals-only environment so caller locals are
+					// not captured (static scoping; also keeps the environment
+					// chain from growing on every call).
+					env = &ast.Env{Globals: env.Globals}
+					val = gv
+					ok = true
+				}
 			}
 			if !ok {
 				panic(ast.RuntimeError{Msg: "Unbound variable: " + name})
@@ -721,6 +748,9 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 				key := getMapKey(env, node.Right)
 				_, ok := f.Set[key]
 				return ast.BoolNode{Val: ok}
+			case ast.SeqPartialNode:
+				n = node.Right
+				continue
 			case ast.SplitPartialNode:
 				s := getStringValue(env, node.Right)
 				var res []string
@@ -864,17 +894,11 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 				case "lines":
 					content := getStringValue(env, node.Right)
 					strList := splitLines(content)
-					var makeNodeList func(strs []string) ast.Node
-					makeNodeList = func(strs []string) ast.Node {
-						if len(strs) == 0 {
-							return ast.NilNode{}
-						}
-						return ast.ConsNode{
-							Head: MakeStringNode(strs[0]),
-							Tail: makeNodeList(strs[1:]),
-						}
+					var listNode ast.Node = ast.NilNode{}
+					for i := len(strList) - 1; i >= 0; i-- {
+						listNode = ast.ConsNode{Head: MakeStringNode(strList[i]), Tail: listNode}
 					}
-					return makeNodeList(strList)
+					return listNode
 				case "numval":
 					s := getStringValue(env, node.Right)
 					sTrimmed := strings.Map(func(r rune) rune {
@@ -907,6 +931,9 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 						}
 					}
 					return ast.IntNode{Val: length}
+				case "seq":
+					Whnf(env, node.Right)
+					return ast.SeqPartialNode{}
 				case "reverse":
 					var reversed ast.Node = ast.NilNode{}
 					curr := node.Right
@@ -1095,29 +1122,11 @@ func Whnf(env *ast.Env, n ast.Node) ast.Node {
 					panic(ast.RuntimeError{Msg: "Unbound variable: " + f.Name})
 				}
 			case ast.ClosureNode:
-				var valNode ast.Node
-				switch r := node.Right.(type) {
-				case ast.IntNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.ThunkNode, ast.MatchErrorNode:
-					valNode = r
-				case ast.LamNode:
-					valNode = ast.ClosureNode{Var: r.Var, Body: r.Body, Env: env}
-				default:
-					valNode = ast.ThunkNode{Cell: &ast.ThunkCell{State: ast.Unevaluated, Expr: node.Right, Env: env}}
-				}
-				env = f.Env.Extend(f.Var, valNode)
+				env = f.Env.Extend(f.Var, bindArg(env, node.Right))
 				n = f.Body
 				continue
 			case ast.LamNode:
-				var valNode ast.Node
-				switch r := node.Right.(type) {
-				case ast.IntNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.ThunkNode, ast.MatchErrorNode:
-					valNode = r
-				case ast.LamNode:
-					valNode = ast.ClosureNode{Var: r.Var, Body: r.Body, Env: env}
-				default:
-					valNode = ast.ThunkNode{Cell: &ast.ThunkCell{State: ast.Unevaluated, Expr: node.Right, Env: env}}
-				}
-				env = env.Extend(f.Var, valNode)
+				env = env.Extend(f.Var, bindArg(env, node.Right))
 				n = f.Body
 				continue
 			default:
@@ -1187,6 +1196,8 @@ func PrintNode(env *ast.Env, n ast.Node) string {
 		return "<h_insert partial 2>"
 	case ast.MemberPartialNode:
 		return "<member partial>"
+	case ast.SeqPartialNode:
+		return "<seq partial>"
 	case ast.SplitPartialNode:
 		return "<split partial>"
 	case ast.ListGetPartialNode:
@@ -1332,6 +1343,8 @@ func DebugPrintNode(n ast.Node) string {
 		return "HInsertPartial2"
 	case ast.MemberPartialNode:
 		return "MemberPartial"
+	case ast.SeqPartialNode:
+		return "SeqPartial"
 	case ast.SplitPartialNode:
 		return "SplitPartial"
 	case ast.ListGetPartialNode:

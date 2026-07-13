@@ -69,6 +69,8 @@ type MemberPartialNode struct {
 	Set map[string]bool
 }
 
+type SeqPartialNode struct{}
+
 type SplitPartialNode struct {
 	Delims string
 }
@@ -195,6 +197,7 @@ func (HLookupPartialNode) isNode() {}
 func (HInsertPartialNode1) isNode() {}
 func (HInsertPartialNode2) isNode() {}
 func (MemberPartialNode) isNode() {}
+func (SeqPartialNode) isNode() {}
 func (SplitPartialNode) isNode() {}
 func (ListGetPartialNode) isNode() {}
 func (ListSetPartialNode1) isNode() {}

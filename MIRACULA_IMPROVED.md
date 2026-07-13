@@ -65,3 +65,18 @@ Advent of Code Part 2 puzzles frequently track numbers in the trillions.
 
 * **`readfile`**: `[char] -> [char]`
   - *Description*: Natively reads the entire contents of a file into a character list (string) in a single operation.
+
+---
+
+## 7. Evaluator Core: Static Scoping, Strictness & Deep Structures
+
+Profiling the implemented built-ins against AoC Day 8 showed that interpreter-core behaviour, not missing primitives, dominates runtime. Three requirements:
+
+* **Static (lexical) scoping for globals** ✅ (implemented)
+  - *Requirement*: A script-level definition must evaluate in the global scope only. Previously a global closed over the *caller's* local environment, which (a) made free variables resolve dynamically (a shadowed global name silently changed a callee's meaning) and (b) grew the environment chain on every call, making all recursion O(n²). Fixing this took `aoc8.m` from 119 s to under 2 s and makes the correct brute-force Day 8 solution run in 3.4 s.
+* **`seq`**: `* -> ** -> **` ✅ (implemented)
+  - *Description*: Forces its first argument to WHNF and returns the second, for any type. Enables constant-space strict accumulators (`foldl`, `sum`) without the integer-only `ifzero` workaround.
+* **Deep-force robustness** ✅ partially (strict `foldl` + argument passthrough; iterative forcer still open)
+  - *Requirement*: Forcing a long chain of dependent thunks (e.g. a 1 000 000-element lazy fold, or an accumulator threaded through a long loop) must not overflow the host stack. Achieved via strict library folds and passing variable arguments through without re-thunking; a fully iterative thunk forcer in the runtime remains open.
+
+*Complexity corrections to Sections 1–2*: as implemented, `list_get`/`list_set` convert the whole list per call (O(N), not O(1)) and `h_insert` copies the whole map per insert. True O(1)/O(log n) behaviour requires a first-class vector value and a structurally-shared persistent map — see Phases 9–10 of the implementation plan.
