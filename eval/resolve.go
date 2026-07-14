@@ -137,6 +137,8 @@ func resolveNode(n ast.Node, scope []string) ast.Node {
 		return ast.DiffNode{Left: resolveNode(node.Left, scope), Right: resolveNode(node.Right, scope)}
 	case ast.RangeNode:
 		return ast.RangeNode{Start: resolveNode(node.Start, scope), End: resolveNode(node.End, scope)}
+	case ast.RangeFromNode:
+		return ast.RangeFromNode{Start: resolveNode(node.Start, scope)}
 	case ast.AddNode:
 		return ast.AddNode{Left: resolveNode(node.Left, scope), Right: resolveNode(node.Right, scope)}
 	case ast.SubNode:

@@ -903,6 +903,17 @@ machine:
 				Env:   env,
 			}}
 			v = ast.ConsNode{Head: v1, Tail: tPrime}
+		case ast.RangeFromNode:
+			v1 := Whnf(env, node.Start)
+			i1, ok1 := v1.(ast.IntNode)
+			if !ok1 {
+				panic(ast.RuntimeError{Msg: "Range bounds must evaluate to integers"})
+			}
+			v = ast.ConsNode{Head: v1, Tail: ast.ThunkNode{Cell: &ast.ThunkCell{
+				State: ast.Unevaluated,
+				Expr:  ast.RangeFromNode{Start: ast.IntNode{Val: i1.Val + 1}},
+				Env:   env,
+			}}}
 		case ast.ProjNode:
 			if tv, qok := tryQuickEval(env, node.Tuple); qok {
 				t, isT := tv.(ast.TupleNode)
@@ -1907,6 +1918,8 @@ func PrintNode(env *ast.Env, n ast.Node) string {
 		return "<thunk>"
 	case ast.RangeNode:
 		return "[" + PrintNode(env, node.Start) + ".." + PrintNode(env, node.End) + "]"
+	case ast.RangeFromNode:
+		return "[" + PrintNode(env, node.Start) + "..]"
 	case ast.ConsNode:
 		if s, isStr := IsString(env, node); isStr {
 			if s == "" {

@@ -290,7 +290,18 @@ Miracula employs the off-side layout rule. Indentation levels are used to determ
 # 12. Iterative expressions
 
 Miracula supports list generator expressions:
-1. **List Ranges**: The dotdot notation generates sequence lists lazily, e.g. `[1..100]`. Only the two-endpoint form is supported — there is no step form `[1,3..9]` and no infinite form `[1..]`; for an infinite sequence use `iterate (+1) 1`.
+1. **List Ranges**: The dotdot notation generates sequence lists lazily. `[1..100]` is the finite range; `[1..]` (no upper bound) is an infinite lazy list of consecutive integers — safe to build and process as long as only a finite prefix is demanded. There is no step form `[1,3..9]`; use a comprehension or `iterate` for other strides.
+```miranda
+miranda> hd [1..]
+Result: 1
+miranda> take 5 [1..]
+Result: [1,2,3,4,5]
+miranda> takewhile (\x. x * x < 50) [1..]
+Result: [1,2,3,4,5,6,7]
+miranda> hd [ x | x <- [1..]; x mod 7 == 0 ]
+Result: 7
+```
+Evaluating an infinite list *in full* (printing `[1..]` itself, or `sum [1..]`, `#[1..]`) of course never finishes — interrupt with Ctrl-C.
 2. **List Comprehensions**: Construct lists using generator bindings and filters. Generators may bind patterns — an element that fails the pattern is skipped:
 ```miranda
 miranda> [ k + v | (k, v) <- zip ([1,2], [10,20]) ]

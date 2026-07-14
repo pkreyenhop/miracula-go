@@ -163,6 +163,10 @@ type AppendNode struct{ Left, Right Node }
 type DiffNode struct{ Left, Right Node }
 type RangeNode struct{ Start, End Node }
 
+// RangeFromNode is an unbounded range [start..]: an infinite lazy list of
+// consecutive integers.
+type RangeFromNode struct{ Start Node }
+
 type ZFNode struct {
 	Body  Node
 	Quals []Qualifier
@@ -212,6 +216,7 @@ func (DiffNode) isNode()               {}
 func (ZFNode) isNode()                 {}
 func (ZFGeneratorNode) isNode()        {}
 func (RangeNode) isNode()              {}
+func (RangeFromNode) isNode()          {}
 func (AddNode) isNode()                {}
 func (SubNode) isNode()                {}
 func (MulNode) isNode()                {}

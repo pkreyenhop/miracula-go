@@ -802,6 +802,17 @@ func (tc *TypeChecker) inferInternal(env *TypeEnv, node ast.Node, sub Substituti
 		}
 		return ListType{Elem: TInt}, sub4, nil
 
+	case ast.RangeFromNode:
+		tS, sub1, err := tc.Infer(env, n.Start, sub)
+		if err != nil {
+			return nil, nil, err
+		}
+		sub2, err := sub1.Unify(tS, TInt)
+		if err != nil {
+			return nil, nil, fmt.Errorf("range start must be Int: %w", err)
+		}
+		return ListType{Elem: TInt}, sub2, nil
+
 	case ast.ZFNode:
 		envCurr := env
 		sCurr := sub

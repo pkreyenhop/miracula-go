@@ -709,6 +709,11 @@ func (p *Parser) parseListElements() ast.Node {
 		return ast.ZFNode{Body: head, Quals: quals}
 	} else if tok.Type == lexer.TOK_DOTDOT {
 		p.consume()
+		if p.peek().Type == lexer.TOK_RBRACK {
+			// unbounded range [start..]: an infinite lazy list
+			p.consume()
+			return ast.RangeFromNode{Start: head}
+		}
 		tailExpr := p.parseExpr()
 		if p.peek().Type != lexer.TOK_RBRACK {
 			p.errorf("expected ']' after range expression")
