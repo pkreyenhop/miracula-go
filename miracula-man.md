@@ -25,7 +25,7 @@
 | 19. | The standard environment |
 | 20. | Some hints on Miracula style |
 | 21. | UNIX/Miracula system interface |
-| 22. | Advent of Code 2025 High-Performance Built-in Functions |
+| 22. | High-performance built-in functions |
 | 23. | Examples Gallery (50 Verified Examples) |
 | 24. | License |
 | 25. | Bug reports |
@@ -155,6 +155,15 @@ sum = foldr (+) 0
 ```
 Note that `-` occurring alone always refers to the infix (dyadic) subtraction. The name `neg` is not predefined, but subtraction can be written as `(0-)`.
 
+## Lambda abstractions
+Anonymous functions are written with a backslash and a dot, and can be nested for multiple arguments:
+```miranda
+miranda> (\x. x * x + 1) 6
+Result: 37
+miranda> sort_by (\a. \b. b - a) [3,1,2]
+Result: [3,2,1]
+```
+
 ---
 
 # 7. Operators and their binding powers
@@ -212,17 +221,25 @@ ifzero if then else mod where
 
 ## Predefined identifiers
 The following identifiers are predefined in the Miracula stdenv and always in scope:
-- **Typenames**: `num` (integers), `char`, `bool`
+- **Typenames**: `num` (64-bit integers), `char`, `bool`
 - **Constructors**: `True`, `False`
-- **Built-in Functions**: `hd`, `tl`, `show`, `read`, `lines`, `numval`, `length`, `reverse`
+- **Built-in Functions** (implemented natively in Go; see sections 21 and 22):
+  - core: `hd`, `tl`, `show`, `read`, `lines`, `numval`, `length`, `reverse`, `seq`
+  - string processing: `split`, `parse_ints`
+  - maps and sets: `empty_map`, `h_insert`, `h_lookup`, `h_lookup_def`, `empty_set`, `member`
+  - vectors: `to_vec`, `vec_get`, `vec_set`, `vec_len`, `vec_to_list`
+  - sorting: `sort_ints`, `sort_by`, `sort_edges`, `sort_pts`
+  - other: `memoize`, `list_get`, `list_set`
 - **Library Functions**: `foldl`, `foldr`, `converse`, `sum`, `map`, `filter`, `take`, `drop`, `takewhile`, `iterate`, `repeat`, `zip`
+
+Built-in names are resolved ahead of any local or script definition, so they cannot be shadowed.
 
 ---
 
 # 10. Literals
 
 Miracula supports three kinds of literals:
-1. **Integers**: Sequences of digits (e.g., `42`).
+1. **Integers**: Sequences of digits (e.g., `42`). Integers are 64-bit signed throughout the lexer, evaluator, and native parsers.
 2. **Characters**: A single character enclosed in single quotes (e.g., `'a'`).
 3. **Strings**: Sequences of characters enclosed in double quotes (e.g., `"hello"`), which are parsed as lists of character literals.
 
@@ -263,7 +280,7 @@ Evaluates to `[(1,4), (1,5), (2,4), (2,5), (3,4), (3,5)]`.
 
 # 13. Scripts
 
-A Miracula script is a text file ending in `.m` containing a list of definitions. Definitions are order-independent.
+A Miracula script is a text file ending in `.m` containing a list of definitions. Definitions are type-checked top-to-bottom: a definition may refer to itself (recursion), to built-ins, and to identifiers defined *earlier* in the file, but not to ones defined later. Within a single definition, `where`-clause bindings may refer to each other freely.
 
 ---
 
@@ -296,9 +313,33 @@ Patterns can contain integers, characters, variables, wildcards `_`, nil `[]`, a
 
 # 16. Basic type structure
 
-Miracula is a dynamically typed functional programming language subset. Expressions are checked dynamically at runtime:
-- Arithmetic operators expect `num` (integer) operands.
-- Comparison operators recursively compare lists, tuples, integers, and characters.
+Miracula is statically typed: every definition and REPL expression is checked by Hindley–Milner type inference before it is evaluated, so type errors are reported at load time with the offending source position. There are no type declarations — types are inferred.
+
+The type formers are:
+
+| Type | Meaning | Printed as |
+| --- | --- | --- |
+| `num` | 64-bit signed integer | `Int` |
+| `bool` | `True` / `False` | `Bool` |
+| `char` | character (strings are `[char]`) | `Char` |
+| `[t]` | list of `t` | `[Int]`, `[[Char]]`, … |
+| `(t1, t2, …)` | tuple | `(Int, Bool)` |
+| `t1 -> t2` | function | `Int -> Int` |
+| map | associative map, keys `num` or `[char]` | `Map(a, b)` |
+| set | membership set | `Set(a)` |
+| vec | vector with O(1) indexed access | `Vec(a)` |
+
+Type variables print as `a`, `b`, `c`, …. Polymorphic definitions are generalised automatically, e.g. the inferred type of `map` is `(a -> b) -> [a] -> [b]`.
+
+A type error looks like:
+
+```
+example.m:3:9: Type Error: cannot unify Int and [Char]
+  3 | bad x = x + "one"
+    |         ^
+```
+
+At run time the evaluator still validates operand shapes (e.g. arithmetic requires integers, comparison recursively compares lists, tuples, integers, and characters), so evaluating a value of the wrong shape raises a runtime error rather than corrupting evaluation.
 
 ---
 
@@ -322,8 +363,11 @@ The standard library `stdenv.m` is automatically loaded at startup and defines c
 ```miranda
 || string == [char]
 
+|| strict in the accumulator (via seq) so long folds run in constant space
 foldl f z []     = z
-foldl f z (x:xs) = foldl f (f z x) xs
+foldl f z (x:xs) = seq z2 (foldl f z2 xs)
+                   where
+                   z2 = f z x
 
 converse f a b = f b a
 
@@ -376,30 +420,173 @@ The following environment-interaction functions are natively supported:
 
 ---
 
-# 22. Advent of Code 2025 High-Performance Built-in Functions
+# 22. High-performance built-in functions
 
-To support large-scale dataset evaluations (e.g. over 2 million intervals) and complex graph search/cellular-automata simulation problems, the Miracula system includes high-performance built-in functions written directly in Go.
+To make large-input problems (such as Advent of Code puzzles) practical, Miracula includes general-purpose built-in functions implemented natively in Go. Signatures below use Miranda-style type variables `*`, `**`; the type checker prints the same types with variables `a`, `b` and the constructors `Map(a, b)`, `Set(a)`, `Vec(a)`.
+
+All examples in this section are verified against the current interpreter.
+
+## 22.1 Strict evaluation: `seq`
 
 | Function | Signature | Description |
 | --- | --- | --- |
-| `aoc1_p1` | `[char] -> num` | Day 1 Part 1 dial landing stop count |
-| `aoc1_p2` | `[char] -> num` | Day 1 Part 2 total times dial touches 0 |
-| `aoc2_p1` | `[char] -> num` | Day 2 Part 1 sum of invalid IDs in ranges |
-| `aoc2_p2` | `[char] -> num` | Day 2 Part 2 sum of invalid IDs in ranges |
-| `aoc3_p1` | `[char] -> num` | Day 3 Part 1 sum of largest joltages |
-| `aoc3_p2` | `[char] -> num` | Day 3 Part 2 sum of 12-digit joltages |
-| `aoc4_p1` | `[char] -> num` | Day 4 Part 1 initial pickable rolls count |
-| `aoc4_p2` | `[char] -> num` | Day 4 Part 2 total pickable rolls count |
-| `aoc5_p1` | `[char] -> num` | Day 5 Part 1 IDs matching range |
-| `aoc5_p2` | `[char] -> num` | Day 5 Part 2 total points of merged ranges |
-| `aoc6_p1` | `[char] -> num` | Day 6 Part 1 sum of arithmetic operations |
-| `aoc6_p2` | `[char] -> num` | Day 6 Part 2 rotated grid sum |
-| `aoc7_p1` | `[char] -> num` | Day 7 Part 1 total splits count |
-| `aoc8_p1` | `([char], num) -> num` | Day 8 Part 1 circuit size product |
-| `aoc9_p1` | `[char] -> num` | Day 9 Part 1 maximum area |
-| `aoc10_p1`| `[char] -> num` | Day 10 Part 1 shortest switch count sum |
-| `aoc11_p1`| `[char] -> num` | Day 11 Part 1 paths count |
-| `aoc11_p2`| `[char] -> num` | Day 11 Part 2 paths count |
+| `seq` | `* -> ** -> **` | Forces its first argument to weak head normal form, then returns the second. |
+
+`seq` pins down evaluation order in an otherwise lazy language — its main use is keeping accumulators strict so long loops run in constant space (the standard `foldl` is built on it, which is why `sum [1..1000000]` works):
+
+```miranda
+miranda> seq (1 + 2) "done"
+Result: done
+miranda> sum [1..1000000]
+Result: 500000500000
+```
+
+## 22.2 String processing: `split`, `parse_ints`
+
+| Function | Signature | Description |
+| --- | --- | --- |
+| `split` | `[char] -> [char] -> [[char]]` | Splits the second string at any character of the first (the delimiter set); empty fields are dropped. |
+| `parse_ints` | `[char] -> [num]` | Extracts every (optionally negative) integer from a string. |
+
+```miranda
+miranda> split "," "a,bb,ccc"
+Result: ["a","bb","ccc"]
+miranda> split " ,;" "1, 2;3"
+Result: ["1","2","3"]
+miranda> parse_ints "x=3, y=-7, z=12"
+Result: [3,-7,12]
+```
+
+`parse_ints` is usually all that is needed to read a puzzle input:
+
+```miranda
+total = sum (parse_ints (read "input.txt"))
+```
+
+## 22.3 Maps: `empty_map`, `h_insert`, `h_lookup`, `h_lookup_def`
+
+| Function | Signature | Description |
+| --- | --- | --- |
+| `empty_map` | `map * **` | The empty map. |
+| `h_insert` | `map * ** -> * -> ** -> map * **` | Returns a new map with the key bound to the value; the original map is unchanged. |
+| `h_lookup` | `map * ** -> * -> **` | Returns the value for a key; runtime error if absent. |
+| `h_lookup_def` | `map * ** -> * -> ** -> **` | Returns the value for a key, or the given default if absent (the default is only evaluated on a miss). |
+
+Maps are immutable AVL trees with structural sharing: `h_insert` is O(log n) and older versions of the map remain valid. Keys are integers or strings (one kind per map — the type checker enforces this). Integer keys are handled natively, without string conversion.
+
+```miranda
+miranda> h_lookup (h_insert (h_insert empty_map "ada" 36) "alan" 41) "alan"
+Result: 41
+miranda> h_lookup_def empty_map "grace" 0
+Result: 0
+```
+
+Building a map by folding — 50,000 inserts complete in well under a second:
+
+```miranda
+squares = foldl ins empty_map [1..10]
+          where ins m k = h_insert m k (k * k)
+
+miranda> h_lookup squares 7
+Result: 49
+```
+
+## 22.4 Sets: `empty_set`, `member`
+
+| Function | Signature | Description |
+| --- | --- | --- |
+| `empty_set` | `set *` | The empty set. |
+| `member` | `set * -> * -> bool` | Membership test. |
+
+```miranda
+miranda> member empty_set 3
+Result: False
+```
+
+Note: there is currently no set-insert builtin, so sets beyond `empty_set` cannot yet be constructed; use a map with dummy values in the meantime.
+
+## 22.5 Vectors: `to_vec`, `vec_get`, `vec_set`, `vec_len`, `vec_to_list`
+
+| Function | Signature | Description |
+| --- | --- | --- |
+| `to_vec` | `[*] -> vec *` | Materialises a list as a vector (elements stay lazy). |
+| `vec_get` | `vec * -> num -> *` | O(1) indexed read (0-based; bounds checked). |
+| `vec_set` | `vec * -> num -> * -> vec *` | Returns a new vector with one element replaced; the original is unchanged. |
+| `vec_len` | `vec * -> num` | O(1) length. |
+| `vec_to_list` | `vec * -> [*]` | Converts back to a list. |
+
+Vectors give constant-time random access where list indexing is linear — the right structure for grids and tables:
+
+```miranda
+miranda> vec_get (to_vec [10,20,30]) 1
+Result: 20
+miranda> vec_len (to_vec [10,20,30])
+Result: 3
+miranda> vec_to_list (vec_set (to_vec [10,20,30]) 0 99)
+Result: [99,20,30]
+```
+
+Because vectors are persistent, updating one never disturbs earlier references:
+
+```miranda
+v = to_vec [10,20,30]
+w = vec_set v 0 99
+
+miranda> (vec_get v 0, vec_get w 0)
+Result: (10,99)
+```
+
+The older `list_get :: [num] -> num -> num` and `list_set :: [num] -> num -> num -> [num]` builtins remain for compatibility, but they convert the whole list on every call (O(n)); prefer vectors.
+
+## 22.6 Sorting: `sort_ints`, `sort_by`, `sort_edges`, `sort_pts`
+
+| Function | Signature | Description |
+| --- | --- | --- |
+| `sort_ints` | `[num] -> [num]` | Ascending sort of integers. |
+| `sort_by` | `(* -> * -> num) -> [*] -> [*]` | Sort with a comparison function returning negative / zero / positive. |
+| `sort_edges` | `[(num,num,num)] -> [(num,num,num)]` | Sorts triples ascending by their third component (e.g. weighted edges by distance). |
+| `sort_pts` | `[(num,(num,num,num))] -> [(num,(num,num,num))]` | Sorts indexed 3-D points ascending by their x coordinate. |
+
+`sort_edges` and `sort_pts` extract their integer keys once and sort natively, so sorting hundreds of thousands of tuples is fast.
+
+```miranda
+miranda> sort_ints [3,1,2]
+Result: [1,2,3]
+miranda> sort_by (\a. \b. b - a) [3,1,2]
+Result: [3,2,1]
+miranda> sort_edges [(1,2,9),(3,4,1)]
+Result: [(3,4,1),(1,2,9)]
+```
+
+## 22.7 Memoization: `memoize`
+
+| Function | Signature | Description |
+| --- | --- | --- |
+| `memoize` | `(* -> **) -> (* -> **)` | Wraps a function so results are cached by argument; integer arguments are cached without serialization. |
+
+```miranda
+steps n = if n == 1 then 0
+          else (if n mod 2 == 0 then 1 + steps (n / 2)
+                else 1 + steps (3 * n + 1))
+msteps = memoize steps
+
+miranda> msteps 27 + msteps 27
+Result: 222
+```
+
+The first call computes; the second returns the cached result. Note that scripts are type-checked top-to-bottom, so a recursive function cannot refer to its own memoized wrapper defined later — `memoize` caches whole top-level calls.
+
+## 22.8 A complete worked example
+
+The Advent of Code 2025 Day 8 solver ([aoc8.m](aoc8.m)) combines most of these: `read` + `parse_ints` for input, a list comprehension over all point pairs, `sort_edges` + `take` for the 1000 shortest, and maps for union-find:
+
+```miranda
+pts      = group3 (parse_ints input)
+edges    = [ (i, j, distSq p q) | (i, p) <- ipts; (j, q) <- ipts; i < j ]
+shortest = take 1000 (sort_edges edges)
+```
+
+Its 499,500 pairwise distances evaluate, sort, and cluster in about 1.3 seconds.
 
 ---
 

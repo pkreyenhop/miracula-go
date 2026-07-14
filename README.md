@@ -5,7 +5,10 @@ Miracula is a lightweight interpreter and interactive REPL for a lazy functional
 ## Features
 
 - **Lazy Evaluation (Call-by-Need):** Expressions are evaluated only when required using memoized thunks to avoid redundant computation. Includes infinite loop detection (`Blackhole` exception).
-- **Lexical Closures (Lexical Scoping):** First-class environment-capturing closures that support lexical scope for nested curried functions, ensuring outer variable bindings are resolved correctly in recursive/nested calls.
+- **Static Type Inference (Hindley–Milner):** Every definition and REPL expression is type-checked before evaluation, with positioned error messages; no type declarations needed.
+- **Lexical Closures (Lexical Scoping):** First-class environment-capturing closures that support lexical scope for nested curried functions, ensuring outer variable bindings are resolved correctly in recursive/nested calls. A post-typecheck resolver rewrites variable references to static coordinates, so lookups need no name comparison at run time.
+- **Unbounded Evaluation Depth:** The evaluator runs on an explicit continuation stack (no Go-stack recursion for strict positions or thunk chains), so folds over millions of elements evaluate instead of overflowing.
+- **High-Performance Native Builtins:** persistent AVL maps (`h_insert`/`h_lookup`/`h_lookup_def`), O(1) vectors (`to_vec`/`vec_get`/`vec_set`), native sorting (`sort_ints`/`sort_by`/`sort_edges`/`sort_pts`), input parsing (`split`/`parse_ints`/`read`/`lines`), `seq`, and `memoize` — see section 22 of the manual (`/m` in the REPL) for signatures and examples.
 - **List Pattern Matching & Desugaring:** Allows defining functions through multiple equations with pattern matching on integers, characters, variables, and list patterns (`[]` and `(x:xs)` cons patterns) compiled into conditional decision trees.
 - **Lazy List Ranges:** Dynamic sequence generators using `[e1..e2]` syntax (e.g., `[1..100]`), lazily evaluated step-by-step so that sequences are generated only as they are accessed.
 - **Interactive REPL**: Provides a prompt (`miranda> `) to define variables/functions and evaluate expressions interactively.
@@ -41,7 +44,7 @@ Miracula parses high-level surface syntax construct and desugars them into core 
 The project follows an idiomatic Go layout:
 - [ast/](file:///home/pkreyenhop/src/miracula-go/ast/ast.go): Defines AST types, pattern matching qualifiers, environment scope chains (`Env`), and execution errors.
 - [cmd/miracula/](file:///home/pkreyenhop/src/miracula-go/cmd/miracula/main.go): Command-line entry point. Handles arguments, loads the stdenv, and spins up the TTY REPL.
-- [eval/](file:///home/pkreyenhop/src/miracula-go/eval/eval.go): Weak Head Normal Form (WHNF) reducer and lazy graph reduction evaluation routines.
+- [eval/](file:///home/pkreyenhop/src/miracula-go/eval/eval.go): Weak Head Normal Form (WHNF) reducer running on an explicit continuation stack, native builtins, and the lexical-addressing resolver (`resolve.go`).
 - [lexer/](file:///home/pkreyenhop/src/miracula-go/lexer/lexer.go): Text tokenizer, layout rules, and standard list formatting wrappers.
 - [parser/](file:///home/pkreyenhop/src/miracula-go/parser/parser.go): Recursive descent parser and pattern-matching equations compiler/desugarer.
 - [repl/](file:///home/pkreyenhop/src/miracula-go/repl/repl.go): Dynamic raw terminal line editor featuring tab-autocomplete, history navigation, and Emacs hotkeys.
