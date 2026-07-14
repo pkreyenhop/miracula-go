@@ -153,7 +153,7 @@ An operator on its own can be used as the name of the corresponding function by 
 ```miranda
 sum = foldr (+) 0
 ```
-Note that `-` occurring alone always refers to the infix (dyadic) subtraction. The name `neg` is not predefined, but subtraction can be written as `(0-)`.
+Note that `-` occurring alone always refers to the infix (dyadic) subtraction. The name `neg` is not predefined; write negation as `(- x)` in expressions or `\x. 0 - x` as a function (presections like `(0-)` are not supported — see section 8).
 
 ## Lambda abstractions
 Anonymous functions are written with a backslash and a dot, and can be nested for multiple arguments:
