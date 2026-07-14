@@ -955,6 +955,7 @@ func DefaultTypeEnv() *TypeEnv {
 	env.Map["h_lookup"] = Scheme{Vars: []int{0, 1}, Ty: FunType{From: MapType{Key: VarType{Id: 0}, Val: VarType{Id: 1}}, To: FunType{From: VarType{Id: 0}, To: VarType{Id: 1}}}}
 	env.Map["h_insert"] = Scheme{Vars: []int{0, 1}, Ty: FunType{From: MapType{Key: VarType{Id: 0}, Val: VarType{Id: 1}}, To: FunType{From: VarType{Id: 0}, To: FunType{From: VarType{Id: 1}, To: MapType{Key: VarType{Id: 0}, Val: VarType{Id: 1}}}}}}
 	env.Map["member"] = Scheme{Vars: []int{0}, Ty: FunType{From: SetType{Elem: VarType{Id: 0}}, To: FunType{From: VarType{Id: 0}, To: TBool}}}
+	env.Map["s_insert"] = Scheme{Vars: []int{0}, Ty: FunType{From: SetType{Elem: VarType{Id: 0}}, To: FunType{From: VarType{Id: 0}, To: SetType{Elem: VarType{Id: 0}}}}}
 	env.Map["split"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TChar}, To: FunType{From: ListType{Elem: TChar}, To: ListType{Elem: ListType{Elem: TChar}}}}}
 	env.Map["parse_ints"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TChar}, To: ListType{Elem: TInt}}}
 	env.Map["list_get"] = Scheme{Vars: nil, Ty: FunType{From: ListType{Elem: TInt}, To: FunType{From: TInt, To: TInt}}}

@@ -213,14 +213,6 @@ func mapKeyString(k ast.MapKey) string {
 	return strconv.FormatInt(k.I, 10)
 }
 
-func getSetKey(env *ast.Env, node ast.Node) string {
-	v := Whnf(env, node)
-	if i, ok := v.(ast.IntNode); ok {
-		return strconv.FormatInt(i.Val, 10)
-	}
-	return getStringValue(env, v)
-}
-
 func MakeStringNode(s string) ast.Node {
 	runes := []rune(s)
 	var listNode ast.Node = ast.NilNode{}
@@ -538,6 +530,27 @@ func tryQuickEval(env *ast.Env, e ast.Node) (ast.Node, bool) {
 			return nil, false
 		}
 		return val, true
+	case ast.GlobalVarNode:
+		gv, ok := env.Globals[t.Name]
+		if !ok {
+			return nil, false
+		}
+		if th, isTh := gv.(ast.ThunkNode); isTh {
+			cell := th.Cell
+			if cell.State != ast.Evaluated {
+				return nil, false
+			}
+			switch cv := cell.Val.(type) {
+			case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ConsNode, ast.TupleNode, ast.ClosureNode, ast.MapNode, ast.SetNode, ast.VecNode:
+				return cv, true
+			}
+			return nil, false
+		}
+		switch gv.(type) {
+		case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode:
+			return gv, true
+		}
+		return nil, false
 	}
 	return nil, false
 }
@@ -622,6 +635,8 @@ machine:
 		case ast.HInsertPartialNode2:
 			v = node
 		case ast.MemberPartialNode:
+			v = node
+		case ast.SInsertPartialNode:
 			v = node
 		case ast.SeqPartialNode:
 			v = node
@@ -724,8 +739,31 @@ machine:
 			if !gok {
 				panic(ast.RuntimeError{Msg: "Unbound variable: " + node.Name})
 			}
-			// globals are closed terms over the global scope: evaluate them
-			// in the chain's root frame so caller locals are not captured
+			// globals are stored as memoized cells (CAFs) evaluated in the
+			// chain's root frame: a constant is computed once per session,
+			// and a self-recursive global blackholes instead of looping
+			if th, isTh := gv.(ast.ThunkNode); isTh {
+				cell := th.Cell
+				switch cell.State {
+				case ast.Evaluated:
+					switch cv := cell.Val.(type) {
+					case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
+						v = cv
+						break dispatch
+					default:
+						n = cv
+						continue
+					}
+				case ast.Evaluating:
+					panic(ast.BlackholeError{Msg: "Infinite loop on identifier: " + node.Name})
+				case ast.Unevaluated:
+					cell.State = ast.Evaluating
+					*pending = append(*pending, cell)
+					n = cell.Expr
+					env = cell.Env
+					continue
+				}
+			}
 			if env.Root != nil {
 				env = env.Root
 			} else {
@@ -736,12 +774,12 @@ machine:
 		case ast.VarNode:
 			name := node.Name
 			switch name {
-			case "hd", "tl", "show", "read", "lines", "numval", "length", "reverse", "seq", "h_lookup", "h_insert", "member", "split", "parse_ints", "list_get", "list_set", "memoize", "sort_by", "sort_ints", "sort_edges", "sort_pts", "h_lookup_def", "to_vec", "vec_get", "vec_set", "vec_len", "vec_to_list":
+			case "hd", "tl", "show", "read", "lines", "numval", "length", "reverse", "seq", "h_lookup", "h_insert", "member", "split", "parse_ints", "list_get", "list_set", "memoize", "sort_by", "sort_ints", "sort_edges", "sort_pts", "h_lookup_def", "s_insert", "to_vec", "vec_get", "vec_set", "vec_len", "vec_to_list":
 				v = node
 			case "empty_map":
 				v = ast.MapNode{Tree: nil}
 			case "empty_set":
-				v = ast.SetNode{Set: make(map[string]bool)}
+				v = ast.SetNode{Tree: nil}
 			}
 			if v != nil {
 				break
@@ -1096,7 +1134,17 @@ machine:
 				continue
 			case ast.GlobalVarNode:
 				if gv, gok := env.Globals[lf.Name]; gok {
-					if lam, isLam := gv.(ast.LamNode); isLam {
+					cv := gv
+					if th, isTh := cv.(ast.ThunkNode); isTh && th.Cell.State == ast.Evaluated {
+						cv = th.Cell.Val
+					}
+					if cl, isCl := cv.(ast.ClosureNode); isCl {
+						argVal := bindArg(env, node.Right)
+						env = cl.Env.Extend(cl.Var, argVal)
+						n = cl.Body
+						continue
+					}
+					if lam, isLam := cv.(ast.LamNode); isLam {
 						root := env.Root
 						if root == nil {
 							root = &ast.Env{Globals: env.Globals}
@@ -1335,9 +1383,12 @@ func applyPartial(env *ast.Env, fVal ast.Node, node ast.AppNode) ast.Node {
 		val := Whnf(env, node.Right)
 		return ast.MapNode{Tree: f.Tree.Insert(f.Key, val)}
 	case ast.MemberPartialNode:
-		key := getSetKey(env, node.Right)
-		_, ok := f.Set[key]
+		key := getMapKey(env, node.Right)
+		_, ok := f.Tree.Lookup(key)
 		return ast.BoolNode{Val: ok}
+	case ast.SInsertPartialNode:
+		key := getMapKey(env, node.Right)
+		return ast.SetNode{Tree: f.Tree.Insert(key, ast.BoolNode{Val: true})}
 	case ast.SeqPartialNode:
 		return node.Right
 	case ast.SplitPartialNode:
@@ -1596,7 +1647,14 @@ func applyBuiltin(env *ast.Env, name string, node ast.AppNode) ast.Node {
 		if !ok {
 			panic(ast.RuntimeError{Msg: "member: expected set as first argument"})
 		}
-		return ast.MemberPartialNode{Set: sNode.Set}
+		return ast.MemberPartialNode{Tree: sNode.Tree}
+	case "s_insert":
+		setVal := Whnf(env, node.Right)
+		sNode, ok := setVal.(ast.SetNode)
+		if !ok {
+			panic(ast.RuntimeError{Msg: "s_insert: expected set as first argument"})
+		}
+		return ast.SInsertPartialNode{Tree: sNode.Tree}
 	case "split":
 		delims := getStringValue(env, node.Right)
 		return ast.SplitPartialNode{Delims: delims}
@@ -1828,6 +1886,8 @@ func PrintNode(env *ast.Env, n ast.Node) string {
 		return "<h_insert partial 2>"
 	case ast.MemberPartialNode:
 		return "<member partial>"
+	case ast.SInsertPartialNode:
+		return "<s_insert partial>"
 	case ast.SeqPartialNode:
 		return "<seq partial>"
 	case ast.SplitPartialNode:
@@ -1993,6 +2053,8 @@ func DebugPrintNode(n ast.Node) string {
 		return "HInsertPartial2"
 	case ast.MemberPartialNode:
 		return "MemberPartial"
+	case ast.SInsertPartialNode:
+		return "SInsertPartial"
 	case ast.SeqPartialNode:
 		return "SeqPartial"
 	case ast.SplitPartialNode:

@@ -62,7 +62,7 @@ type MapNode struct {
 }
 
 type SetNode struct {
-	Set map[string]bool
+	Tree *MapTree
 }
 
 type HLookupPartialNode struct {
@@ -79,7 +79,11 @@ type HInsertPartialNode2 struct {
 }
 
 type MemberPartialNode struct {
-	Set map[string]bool
+	Tree *MapTree
+}
+
+type SInsertPartialNode struct {
+	Tree *MapTree
 }
 
 type SeqPartialNode struct{}
@@ -234,6 +238,7 @@ func (HLookupPartialNode) isNode()     {}
 func (HInsertPartialNode1) isNode()    {}
 func (HInsertPartialNode2) isNode()    {}
 func (MemberPartialNode) isNode()      {}
+func (SInsertPartialNode) isNode()     {}
 func (SeqPartialNode) isNode()         {}
 func (SplitPartialNode) isNode()       {}
 func (ListGetPartialNode) isNode()     {}

@@ -8,17 +8,17 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"pkreyenhop.com/miracula-go/ast"
+	"pkreyenhop.com/miracula-go/eval"
+	"pkreyenhop.com/miracula-go/lexer"
+	"pkreyenhop.com/miracula-go/parser"
+	"pkreyenhop.com/miracula-go/typecheck"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 	"unicode"
 	"unsafe"
-	"pkreyenhop.com/miracula-go/ast"
-	"pkreyenhop.com/miracula-go/lexer"
-	"pkreyenhop.com/miracula-go/parser"
-	"pkreyenhop.com/miracula-go/eval"
-	"pkreyenhop.com/miracula-go/typecheck"
 )
 
 var (
@@ -55,7 +55,7 @@ func pendingBytes() int {
 	var limit int
 	_, _, err := syscall.Syscall(
 		syscall.SYS_IOCTL,
-		uintptr(0), // stdin fd
+		uintptr(0),      // stdin fd
 		uintptr(0x541b), // FIONREAD / TIOCINQ ioctl code on Linux
 		uintptr(unsafe.Pointer(&limit)),
 	)
@@ -538,10 +538,18 @@ func LoadScriptFile(filename string, env *ast.Env, typeEnv *typecheck.TypeEnv) (
 		scheme := typecheck.Generalize(sCurr.ApplyEnv(accTypeEnv), finalTy)
 		accTypeEnv = accTypeEnv.Extend(name, scheme)
 		resolved := eval.Resolve(desugaredLambda)
+		// store the global as a memoized cell (CAF): constants evaluate
+		// once per session and self-recursive globals blackhole cleanly
+		rootEnv := accEnv.Root
+		if rootEnv == nil {
+			rootEnv = accEnv
+		}
+		global := ast.ThunkNode{Cell: &ast.ThunkCell{State: ast.Unevaluated, Expr: resolved, Env: rootEnv}}
 		if posVal, found := ast.NodePositions.Load(ast.GetNodeKey(desugaredLambda)); found {
 			ast.NodePositions.Store(ast.GetNodeKey(resolved), posVal)
+			ast.NodePositions.Store(ast.GetNodeKey(global), posVal)
 		}
-		accEnv = accEnv.ExtendGlobal(name, resolved)
+		accEnv = accEnv.ExtendGlobal(name, global)
 	}
 
 	return accEnv, accTypeEnv, nil
@@ -676,23 +684,23 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 			_ = cmd.Run()
 			fmt.Printf("Reloading environment profiles from %s...\n", targetFile)
 			envWithStd, typeEnvWithStd, _ := LoadScriptFile("stdenv.m", ast.NewEnv(), typecheck.DefaultTypeEnv())
-			
+
 			if envWithHome, typeEnvWithHome, err := LoadScriptFile("~/.script.m", envWithStd, typeEnvWithStd); err == nil {
 				envWithStd = envWithHome
 				typeEnvWithStd = typeEnvWithHome
 			}
-			
+
 			var reloadedEnv *ast.Env
 			var reloadedTypeEnv *typecheck.TypeEnv
 			var err error
-			
+
 			if ExpandHome(targetFile) != ExpandHome("~/.script.m") {
 				reloadedEnv, reloadedTypeEnv, err = LoadScriptFile(targetFile, envWithStd, typeEnvWithStd)
 			} else {
 				reloadedEnv = envWithStd
 				reloadedTypeEnv = typeEnvWithStd
 			}
-			
+
 			if err != nil {
 				fmt.Printf("Error reloading: %v\n", err)
 			} else {
@@ -797,7 +805,7 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 					}
 				}
 			}()
-			
+
 			segments := lexer.SplitTokens(tokens)
 			if len(segments) == 0 {
 				return
@@ -863,10 +871,16 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 					scheme := typecheck.Generalize(sCurr.ApplyEnv(accTypeEnv), finalTy)
 					accTypeEnv = accTypeEnv.Extend(name, scheme)
 					resolved := eval.Resolve(finalLambda)
+					rootEnv := accEnv.Root
+					if rootEnv == nil {
+						rootEnv = accEnv
+					}
+					global := ast.ThunkNode{Cell: &ast.ThunkCell{State: ast.Unevaluated, Expr: resolved, Env: rootEnv}}
 					if posVal, found := ast.NodePositions.Load(ast.GetNodeKey(finalLambda)); found {
 						ast.NodePositions.Store(ast.GetNodeKey(resolved), posVal)
+						ast.NodePositions.Store(ast.GetNodeKey(global), posVal)
 					}
-					accEnv = accEnv.ExtendGlobal(name, resolved)
+					accEnv = accEnv.ExtendGlobal(name, global)
 				}
 
 				for _, name := range order {
@@ -1224,4 +1238,3 @@ func EvaluateAndExit(env *ast.Env, typeEnv *typecheck.TypeEnv, parameter string,
 		}
 	}
 }
-

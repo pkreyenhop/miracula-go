@@ -330,6 +330,8 @@ Evaluates to `[(1,4), (1,5), (2,4), (2,5), (3,4), (3,5)]`.
 
 A Miracula script is a text file ending in `.m` containing a list of definitions. Definitions are type-checked top-to-bottom: a definition may refer to itself (recursion), to built-ins, and to identifiers defined *earlier* in the file, but not to ones defined later. Within a single definition, `where`-clause bindings may refer to each other freely.
 
+Top-level definitions are *memoized* (constant applicative forms): a definition without parameters is evaluated at most once per session, on first use, and every later reference returns the cached value. A self-referential constant such as `x = x + 1` is detected and reported as `Infinite loop on identifier: x`.
+
 ---
 
 # 14. Definitions
@@ -613,19 +615,22 @@ miranda> h_lookup squares 7
 Result: 49
 ```
 
-## 22.4 Sets: `empty_set`, `member`
+## 22.4 Sets: `empty_set`, `s_insert`, `member`
 
 | Function | Signature | Description |
 | --- | --- | --- |
 | `empty_set` | `set *` | The empty set. |
+| `s_insert` | `set * -> * -> set *` | Returns a new set with the element added; the original set is unchanged. |
 | `member` | `set * -> * -> bool` | Membership test. |
 
-```miranda
-miranda> member empty_set 3
-Result: False
-```
+Sets share the persistent AVL representation of maps: `s_insert` is O(log n) with structural sharing, and elements are integers or strings (one kind per set). The classic visited-set idiom:
 
-Note: there is currently no set-insert builtin, so sets beyond `empty_set` cannot yet be constructed; use a map with dummy values in the meantime.
+```miranda
+visited = foldl s_insert empty_set [3, 7, 3, 12]
+
+miranda> (member visited 7, member visited 4)
+Result: (True,False)
+```
 
 ## 22.5 Vectors: `to_vec`, `vec_get`, `vec_set`, `vec_len`, `vec_to_list`
 
