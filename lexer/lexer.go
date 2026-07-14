@@ -52,6 +52,7 @@ const (
 	TOK_OR
 	TOK_DIFF
 	TOK_NOT
+	TOK_PIPEGT
 	// TOK_ERROR marks a character the lexer does not recognise; the parser
 	// rejects it with a positioned parse error instead of skipping it.
 	TOK_ERROR
@@ -145,6 +146,9 @@ func TokenizeWithPos(str string, line int) []Token {
 			if i+1 < size && runes[i+1] == '|' {
 				// Comment! Ignore the rest of the line
 				break
+			} else if i+1 < size && runes[i+1] == '>' {
+				addTok(Token{Type: TOK_PIPEGT})
+				i += 2
 			} else {
 				addTok(Token{Type: TOK_PIPE})
 				i++
@@ -639,6 +643,8 @@ func TokenToString(t Token) string {
 		return "--"
 	case TOK_NOT:
 		return "~"
+	case TOK_PIPEGT:
+		return "|>"
 	case TOK_ERROR:
 		return t.Str
 	}

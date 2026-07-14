@@ -341,9 +341,23 @@ func (p *Parser) parseExpr() ast.Node {
 		fBranch := p.parseExpr()
 		e = ast.IfNode{Cond: cond, Then: tBranch, Else: fBranch}
 	default:
-		e = p.parseOr()
+		e = p.parsePipe()
 	}
 	return p.mark(e, tok)
+}
+
+// parsePipe handles the pipe operator `x |> f`, sugar for the application
+// `f x`. It is the loosest binary operator and left-associative, so
+// `x |> f |> g` reads `g (f x)`.
+func (p *Parser) parsePipe() ast.Node {
+	tok := p.peek()
+	left := p.parseOr()
+	for p.peek().Type == lexer.TOK_PIPEGT {
+		p.consume()
+		right := p.parseOr()
+		left = p.mark(ast.AppNode{Left: right, Right: left}, tok)
+	}
+	return p.mark(left, tok)
 }
 
 func (p *Parser) parseOr() ast.Node {

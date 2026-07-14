@@ -165,6 +165,18 @@ Result: [3,2,1]
 ```
 (Note the dot: Haskell-style `\x -> e` is not accepted.)
 
+## The pipe operator
+`x |> f` applies `f` to `x`. It is left-associative and binds loosest of all operators, so data flows left to right through a chain — often more readable than nested application:
+```miranda
+miranda> "peter" |> reverse |> hd
+Result: 'r'
+miranda> [1,2,3] |> map (\x. x * x) |> sum
+Result: 14
+miranda> "a,b" |> split "," |> length
+Result: 2
+```
+Because it binds loosest, `1 + 2 |> (+10)` reads `(1 + 2) |> (+10)` = `13`. A lambda used directly as a pipe target must be parenthesised.
+
 ## Conditional expressions
 `if` requires both branches and an expression condition; `ifzero` is a specialised form testing an integer against zero:
 ```miranda
@@ -183,6 +195,7 @@ Here is the complete list of prefix and infix operators supported by Miracula, i
 
 | Operator | Association / Type |
 | --- | --- |
+| `|>` | left associative (pipe: `x |> f` is the application `f x`) |
 | `\/` | right associative (logical OR, short-circuit) |
 | `&` | right associative (logical AND, short-circuit) |
 | `~` | prefix (logical negation; binds looser than comparisons, so `~ a == b` reads `~(a == b)`) |
