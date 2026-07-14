@@ -193,6 +193,7 @@ func TokenizeWithPos(str string, line int) []Token {
 				addTok(Token{Type: TOK_NE})
 				i += 2
 			} else {
+				addTok(Token{Type: TOK_ERROR, Str: "!"})
 				i++
 			}
 			continue

@@ -27,8 +27,9 @@
 | 21. | UNIX/Miracula system interface |
 | 22. | High-performance built-in functions |
 | 23. | Examples Gallery (50 Verified Examples) |
-| 24. | License |
-| 25. | Bug reports |
+| 24. | Miracula for Miranda users |
+| 25. | License |
+| 26. | Bug reports |
 
 ---
 
@@ -856,12 +857,57 @@ pos_ints = iterate (+1) 1                || take 5 pos_ints -> [1, 2, 3, 4, 5]
 
 ---
 
-# 24. License
+# 24. Miracula for Miranda users
+
+If you already know Miranda, Miracula will feel immediately familiar: lazy evaluation, `||` comments, the offside layout rule, guarded equations with `otherwise`, `where` clauses, list comprehensions with `;`-separated qualifiers, sections, `#`, `++`, `--`, `:`, and strings as `[char]` all work as you expect. This section lists only what is *different*. Every claim below is verified against the current interpreter.
+
+## Things Miranda has that Miracula does not
+
+| Miranda | In Miracula |
+| --- | --- |
+| floats; arbitrary-precision integers | `num` is a 64-bit signed integer only; overflow wraps silently |
+| `x div y` and float `/` | `/` *is* integer division (floor); there is no `div` |
+| `x ^ y`, `xs ! n` | not supported — use `vec_get (to_vec xs) n` for subscripting |
+| type declarations `f :: num -> num` | parse error — types are inferred only (Hindley–Milner, section 16) |
+| algebraic types `tree ::= Leaf \| Node ...` | not supported; model variants with tuples/tags |
+| type synonyms `string == [char]`, `abstype` | not supported |
+| `%include`, `%export`, literate scripts | no module system; one script + `stdenv.m` |
+| order-independent definitions | **checked top-to-bottom**: a definition may not reference one defined later in the file, so mutual recursion across top-level definitions is rejected |
+| guard fall-through to the next equation | **failing all guards is a runtime error** (`Pattern matching exhausted`) — always end with `otherwise` |
+| step ranges `[1,3..9]` = `[1,3,5,7,9]` | **pitfall**: `[1,3..9]` parses as `1 : [3..9]` = `[1,3,4,5,6,7,8,9]` — use a comprehension like `[x | x <- [1..9]; x mod 2 ~= 0]` |
+| continued relations `0 <= x < 10` | syntax error — write `0 <= x & x < 10` |
+| n+k patterns `f (n+1) = ...` | parse error — match on `n` and use `n - 1` |
+| list patterns `[a, b]` | parse error — write `(a:b:[])` |
+| tuple bindings in where: `(a, b) = e` | parse error — use a pattern-matching helper: `first (a, b) = a` |
+| general sections `(1+)`, `(*2)`, `(2/)` | only `(+)`, `(+e)`, `(:)`, `(:e)`, `(-)` — use lambdas otherwise (section 8) |
+| `$fn` user-defined infix | not supported |
+| `error`, `undef` | not available |
+| curried `zip2 xs ys` | `zip` takes a *tuple* of lists: `zip (xs, ys)` |
+| rich stdenv (`abs`, `max`, `concat`, `last`, …) | minimal stdenv (section 19) — define what you need or use the native builtins |
+
+## Things Miracula has that Miranda does not
+
+| Feature | Example |
+| --- | --- |
+| lambda abstractions | `map (\x. x * x) [1..3]` (Miranda has no anonymous functions) |
+| conditional expressions | `if p then a else b` and `ifzero n then a else b` (Miranda uses guards only) |
+| the pipe operator | `"peter" \|> reverse \|> hd` → `'r'` (section 6) |
+| `!=` | accepted as an alias for `~=` |
+| native maps, sets, vectors | `h_insert`/`h_lookup`, `s_insert`/`member`, `to_vec`/`vec_get` — persistent, O(log n)/O(1) (section 22) |
+| native input parsing | `read`, `lines`, `split`, `parse_ints` — `sum (parse_ints (read "input.txt"))` |
+| native sorting and memoization | `sort_ints`, `sort_by`, `sort_edges`, `sort_pts`, `memoize` |
+| REPL conveniences | tab completion, `?identifier` source lookup, per-expression timing, Ctrl-C interruption of a running evaluation |
+
+Two behavioural notes that have no syntax at all: top-level definitions are memoized once per session (section 13), and evaluation depth is bounded only by memory — a `foldr` over millions of elements evaluates rather than overflowing a stack.
+
+---
+
+# 25. License
 
 Copyright Research Software Limited 1985-2020. Adapted for Miracula (a Go subset implementation of Miranda).
 
 ---
 
-# 25. Bug reports
+# 26. Bug reports
 
 Please report any interpreter bugs, parser errors, or REPL issues to the project maintainer.
