@@ -10,6 +10,9 @@ converse f a b = f b a
 
 sum = foldl (+) 0
 
+product = foldl mul 1
+          where mul a b = a * b
+
 map f x = [f a | a<-x]
 
 filter p xs = [x | x <- xs; p x]

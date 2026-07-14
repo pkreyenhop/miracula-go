@@ -296,10 +296,35 @@ Miracula supports three kinds of literals:
 
 # 11. Tokenisation and layout
 
-Miracula employs the off-side layout rule. Indentation levels are used to determine block boundaries:
-- A new block is opened by increasing indentation.
-- Statements in the same block must start at the same indentation level, separated implicitly by semicolons.
-- Decreasing the indentation level closes the block.
+A script or expression is composed of *tokens* — identifiers, literals, keywords, and delimiter symbols — separated by *layout*: spaces, tabs, newlines, and `||` comments.
+
+Layout is ignored except in two respects.
+
+**1. Token separation.** At least one layout character must separate two tokens that would otherwise merge into one. `f 19` is an application; `f19` is a single identifier, because digits are legal identifier characters.
+
+**2. The offside rule** (Landin). Every token of a definition's right-hand side must lie directly below or to the right of the column where the right-hand side begins. A token further left is "offside" and ends the definition — which is why scripts need no explicit terminators:
+
+```miranda
+f x = y + z
+      where
+      y = (x + 1) * (x - 1)
+      z = y * 2
+g r = f (r + 1)
+
+miranda> g 2
+Result: 24
+```
+
+The `g` in column 1 is offside with respect to `f`'s right-hand side, so it starts a new top-level definition — while `y` and `z`, indented under the `where`, are local to `f`. Nested `where` clauses work the same way: each deeper block is indented further (section 14).
+
+Within one line, `where` bindings may instead be separated by explicit semicolons:
+
+```miranda
+miranda> a + b where a = 1; b = 2
+Result: 3
+```
+
+[Reference: P. J. Landin, "The Next 700 Programming Languages", CACM 9(3), 1966.]
 
 ---
 
@@ -323,6 +348,23 @@ Evaluating an infinite list *in full* (printing `[1..]` itself, or `sum [1..]`, 
 miranda> [ k + v | (k, v) <- zip ([1,2], [10,20]) ]
 Result: [11,22]
 ```
+
+With multiple generators, enumeration order is that of nested loops with the rightmost generator innermost:
+```miranda
+miranda> [ (x, y) | x <- [1,2]; y <- [1,2,3] ]
+Result: [(1,1),(1,2),(1,3),(2,1),(2,2),(2,3)]
+```
+
+Generator variables scope left to right, so later generators may depend on earlier ones. The classic example — all permutations of a list, using the `--` difference operator:
+```miranda
+perms [] = [[]]
+perms x = [ a : p | a <- x; p <- perms (x -- [a]) ]
+
+miranda> perms [1,2,3]
+Result: [[1,2,3],[1,3,2],[2,1,3],[2,3,1],[3,1,2],[3,2,1]]
+```
+
+Note that comprehensions do not remove duplicates from their result, and a comprehension over an infinite first generator is itself a perfectly good infinite list.
 ```miranda
 [x * x | x <- [1..10]]
 ```
@@ -438,8 +480,19 @@ miranda> firstTwo [7,8,9]
 Result: (7,8)
 ```
 
+Patterns combine freely with guards — the pattern selects the equation, the guards select within it:
+```miranda
+lastx [] = 0 - 1
+lastx (a:rest) = a, if rest == []
+              = lastx rest, otherwise
+
+miranda> lastx [5,6,7]
+Result: 7
+```
+
 Limitations:
 - Non-empty bracketed list patterns are not supported: write `(x:y:[])` instead of `[x, y]`.
+- A repeated variable in one pattern, e.g. `same (x, x) = x`, is accepted but performs **no equality check** — the leftmost occurrence silently wins (`same (1, 2)` is `1`). In Miranda such a pattern matches only when the components are equal.
 - Patterns appear only on equation left-hand sides (top-level and in `where` clauses) and in comprehension generators (`(k, v) <- pairs`); a generator whose pattern fails simply skips that element.
 - If no equation matches, evaluation stops with `Runtime Error: Pattern matching exhausted`.
 
@@ -481,7 +534,16 @@ At run time the evaluator still validates operand shapes (e.g. arithmetic requir
 
 # 17. The special function `show`
 
-The built-in function `show` converts any value into its printable string representation. For lists of characters (strings), it prints them as raw text; for numbers, tuples, and other structures, it formats them explicitly.
+The built-in function `show` converts any value into its printable string representation (a `[char]`). Numbers, characters, lists, and tuples format structurally; strings inside a structure print quoted, while a string result at the REPL prints as raw text on the line after `Result:`.
+
+`show` is fully polymorphic — unlike Miranda, there is no monomorphism restriction on its use in scripts — and it is first-class, so it can be passed around like any function:
+
+```miranda
+miranda> map show [1,2,3]
+Result: ["1","2","3"]
+```
+
+Values with no useful textual form print as placeholders: functions as `\x. <closure>`, maps as `<map>`, sets as `<set>` (vectors print their elements: `vec [1,2,3]`). Applying `show` to an infinite list never terminates — take a prefix first.
 
 ---
 
@@ -511,6 +573,9 @@ foldl f z (x:xs) = seq z2 (foldl f z2 xs)
 converse f a b = f b a
 
 sum = foldl (+) 0
+
+product = foldl mul 1
+          where mul a b = a * b
 
 map f x = [f a | a<-x]
 
@@ -542,9 +607,30 @@ zip (x:xs, y:ys) = (x, y) : zip (xs, ys)
 
 # 20. Some hints on Miracula style
 
-1. **Avoid deep nesting**: Keep local definitions clear.
-2. **Use lists and tuples**: Make use of structural pattern matching instead of explicit indexes.
-3. **Use list comprehensions**: Prefer generators over recursive filters where appropriate.
+These are suggestions, not rules — adapted from the Miranda manual's guidelines and the experience of writing the Advent of Code solvers in this repository.
+
+**Prefer comprehensions, ranges, and folds to ad-hoc recursion.** A script made of many small functions recursing into each other is the functional equivalent of spaghetti. Compare:
+
+```miranda
+fac n = product [1..n]
+```
+with the first-principles recursion it replaces. Likewise a Cartesian product as a comprehension,
+```miranda
+cp x y = [ (a, b) | a <- x; b <- y ]
+```
+is clearer than the two-level recursion needed to write it by hand. `map`, `filter`, `foldl`, `foldr`, `take`, `drop`, and `takewhile` capture the common recursion patterns; reach for them first, and for the native builtins (section 22) when data sizes grow.
+
+**Keep `where` nesting shallow.** One level of local definitions per top-level function reads well; `where` inside `where` should be rare. Deeply nested helpers cannot be exercised separately, and in the REPL that matters: a helper defined at top level can be tested interactively on its own input the moment it is defined. If a helper does not need the enclosing function's variables, make it top-level.
+
+**Order definitions bottom-up.** Since scripts are checked top-to-bottom (section 13), helpers must precede their users; put the small building blocks first and `main` last, and the file reads as a narrative from pieces to whole.
+
+**Document intended types in comments.** There are no type declarations, and inference will happily give a wrong-but-consistent program a surprising type. For any non-obvious top-level function, a one-line comment such as
+```miranda
+|| dist :: (num,num,num) -> (num,num,num) -> num
+```
+costs nothing and pins down intent where the compiler cannot.
+
+**Force long accumulators.** The standard `foldl` is already strict, but hand-written accumulating loops should force their accumulator with `seq` each step — an unforced accumulator builds a chain of suspended additions across millions of iterations.
 
 ---
 
@@ -879,6 +965,10 @@ If you already know Miranda, Miracula will feel immediately familiar: lazy evalu
 | step ranges `[1,3..9]` = `[1,3,5,7,9]` | **pitfall**: `[1,3..9]` parses as `1 : [3..9]` = `[1,3,4,5,6,7,8,9]` — use a comprehension like `[x | x <- [1..9]; x mod 2 ~= 0]` |
 | continued relations `0 <= x < 10` | syntax error — write `0 <= x & x < 10` |
 | n+k patterns `f (n+1) = ...` | parse error — match on `n` and use `n - 1` |
+| repeated pattern variables `(x, x)` match only equal parts | accepted but **no equality check** — the leftmost binding silently wins |
+| multi-variable generators `a,b <- xs` | parse error — write `a <- xs; b <- xs` |
+| recurrence generators `x <- a, f x ..` | parse error — use `iterate f a` |
+| `show` restricted to monomorphic contexts in scripts | no restriction — `show` is fully polymorphic everywhere |
 | list patterns `[a, b]` | parse error — write `(a:b:[])` |
 | tuple bindings in where: `(a, b) = e` | parse error — use a pattern-matching helper: `first (a, b) = a` |
 | general sections `(1+)`, `(*2)`, `(2/)` | only `(+)`, `(+e)`, `(:)`, `(:e)`, `(-)` — use lambdas otherwise (section 8) |
