@@ -211,7 +211,12 @@ Additional notes:
 - Integer division truncates toward negative infinity (`100 / 3` is `33`); there is no separate `div`. Exponentiation `^` and subscripting `!` are not supported (for subscripting use `vec_get` on a vector).
 - Division or modulo by zero raises a runtime error.
 - `->` is tokenised but not part of any construct — lambdas use a dot (`\x. e`), not an arrow.
-- **Pitfall:** characters with no meaning to the lexer (`$`, `%`, `^`, `@`, a lone `!`, braces typed directly, …) are currently *silently skipped*, so a typo like `a $ b` parses as the application `a b`. The type checker usually catches the damage, but not always.
+- Characters with no meaning to the language (`$`, `%`, `^`, `@`, a lone `!`, braces typed directly, …) are rejected with a positioned parse error:
+```
+miranda> a $ b
+<stdin>:1:3: unrecognised character "$"
+```
+Inside string literals and `||` comments any character is of course fine.
 
 ---
 
@@ -457,7 +462,7 @@ The built-in function `show` converts any value into its printable string repres
 - **Identifiers**: Letters, digits, and underscores, starting with a letter or underscore; lowercase initial for variables, uppercase for constructors (`True`, `False`).
 - **Keywords**: `if`, `then`, `else`, `ifzero`, `mod`, `where` are reserved. `otherwise` is only special inside guard clauses.
 - **Character escapes**: in character literals `'\n'`, `'\t'`, `'\''`, `'\\'`; in string literals `\n`, `\t`, `\"`, `\\`. Any other escaped character stands for itself.
-- **Unrecognised symbols** (`$`, `%`, `^`, `@`, a lone `!`, …) are silently skipped by the tokenizer — see the pitfall note in section 7.
+- **Unrecognised symbols** (`$`, `%`, `^`, `@`, a lone `!`, …) outside strings and comments are a parse error, reported with the exact source position and a caret.
 
 ---
 

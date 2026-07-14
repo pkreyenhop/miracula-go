@@ -262,7 +262,19 @@ func (p *Parser) parseRHS() ast.Node {
 	return body
 }
 
+// checkLexErrors rejects any character the lexer could not tokenise, with
+// its exact source position, before parsing begins.
+func (p *Parser) checkLexErrors() {
+	for i, t := range p.tokens {
+		if t.Type == lexer.TOK_ERROR {
+			p.pos = i
+			p.errorf("unrecognised character %q", t.Str)
+		}
+	}
+}
+
 func (p *Parser) Parse() Stmt {
+	p.checkLexErrors()
 	if isAssignment(p.tokens[p.pos:]) {
 		tok := p.peek()
 		if tok.Type != lexer.TOK_VAR {

@@ -52,6 +52,9 @@ const (
 	TOK_OR
 	TOK_DIFF
 	TOK_NOT
+	// TOK_ERROR marks a character the lexer does not recognise; the parser
+	// rejects it with a positioned parse error instead of skipping it.
+	TOK_ERROR
 )
 
 type Token struct {
@@ -345,6 +348,7 @@ func TokenizeWithPos(str string, line int) []Token {
 			i = j
 			continue
 		}
+		addTok(Token{Type: TOK_ERROR, Str: string(c)})
 		i++
 	}
 	// For EOF, we can use the last column index
@@ -635,6 +639,8 @@ func TokenToString(t Token) string {
 		return "--"
 	case TOK_NOT:
 		return "~"
+	case TOK_ERROR:
+		return t.Str
 	}
 	return ""
 }
