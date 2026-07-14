@@ -346,12 +346,23 @@ func (p *Parser) parseOr() ast.Node {
 
 func (p *Parser) parseAnd() ast.Node {
 	tok := p.peek()
-	left := p.parseCons()
+	left := p.parseNot()
 	if p.peek().Type == lexer.TOK_AND {
 		p.consume()
 		return p.mark(ast.IfNode{Cond: left, Then: p.parseAnd(), Else: ast.BoolNode{Val: false}}, tok)
 	}
 	return p.mark(left, tok)
+}
+
+// parseNot handles prefix logical negation `~e`, binding tighter than `&`
+// and `\/` but looser than comparisons, so `~ a == b` reads ~(a == b).
+func (p *Parser) parseNot() ast.Node {
+	tok := p.peek()
+	if tok.Type == lexer.TOK_NOT {
+		p.consume()
+		return p.mark(ast.IfNode{Cond: p.parseNot(), Then: ast.BoolNode{Val: false}, Else: ast.BoolNode{Val: true}}, tok)
+	}
+	return p.parseCons()
 }
 
 func (p *Parser) parseCons() ast.Node {

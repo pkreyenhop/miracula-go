@@ -163,48 +163,76 @@ Result: 37
 miranda> sort_by (\a. \b. b - a) [3,1,2]
 Result: [3,2,1]
 ```
+(Note the dot: Haskell-style `\x -> e` is not accepted.)
+
+## Conditional expressions
+`if` requires both branches and an expression condition; `ifzero` is a specialised form testing an integer against zero:
+```miranda
+miranda> if 3 > 2 then "yes" else "no"
+Result:
+yes
+miranda> ifzero (3 - 3) then 1 else 2
+Result: 1
+```
 
 ---
 
 # 7. Operators and their binding powers
 
-Here is a list of all prefix and infix operators supported by Miracula, in order of increasing binding power:
+Here is the complete list of prefix and infix operators supported by Miracula, in order of increasing binding power (this table matches the parser grammar exactly):
 
 | Operator | Association / Type |
 | --- | --- |
-| `:` `++` `--` | right associative (list cons, append, difference) |
-| `\/` | associative (logical OR) |
-| `&` | associative (logical AND) |
-| `~` | prefix (logical negation) |
-| `>` `>=` `==` `~=` `<=` `<` | relations / comparisons |
+| `\/` | right associative (logical OR, short-circuit) |
+| `&` | right associative (logical AND, short-circuit) |
+| `~` | prefix (logical negation; binds looser than comparisons, so `~ a == b` reads `~(a == b)`) |
+| `:` | right associative (list cons) |
+| `++` `--` | right associative (list append, list difference) |
+| `==` `~=` `<` `<=` `>` `>=` | comparisons (non-associative: `a < b < c` is a syntax error) |
 | `+` `-` | left associative (addition, subtraction) |
-| `-` | prefix (unary minus) |
-| `*` `/` `mod` | left associative (multiplication, division, modulo) |
-| `.` | associative (function composition) |
-| `#` | prefix (list length) |
-| `$infix` | right associative (user-defined infix) |
+| `*` `/` `mod` | left associative (multiplication, integer division, modulo — all one level) |
+| `.` | right associative (function composition) |
+| *juxtaposition* | left associative (function application) |
+| `#` | prefix (list length; applies to one atom: `#xs + 1` is `(#xs) + 1`) |
+| `-` | prefix (unary minus at atom level, e.g. `-x * y` is `(0-x) * y`) |
 
-Note that integer division `div` is not supported; use `/` for division. Exponentiation `^` and subscripting `!` are also not supported in this implementation.
+Examples (all verified):
+```miranda
+miranda> ~False & True
+Result: True
+miranda> 1 : [2] ++ [3]
+Result: [1,2,3]
+miranda> #[1,2,3] + 1
+Result: 4
+```
+
+Additional notes:
+- `!=` is accepted as an alias for `~=`.
+- Integer division truncates toward negative infinity (`100 / 3` is `33`); there is no separate `div`. Exponentiation `^` and subscripting `!` are not supported (for subscripting use `vec_get` on a vector).
+- Division or modulo by zero raises a runtime error.
+- `->` is tokenised but not part of any construct — lambdas use a dot (`\x. e`), not an arrow.
+- **Pitfall:** characters with no meaning to the lexer (`$`, `%`, `^`, `@`, a lone `!`, braces typed directly, …) are currently *silently skipped*, so a typo like `a $ b` parses as the application `a b`. The type checker usually catches the damage, but not always.
 
 ---
 
 # 8. Operator sections
 
-An infix operator can be partially applied by supplying only one of its operands, resulting in a function of one argument. These are called sections.
+A few operators can be used as functions or partially applied. Miracula supports exactly these section forms (all verified):
 
-An example of a presection is:
-```miranda
-(1/)
-```
-which denotes the reciprocal function. An example of a postsection is:
-```miranda
-(+2)
-```
-which adds two to its argument.
+| Section | Meaning | Example |
+| --- | --- | --- |
+| `(+)` | two-argument addition | `foldl (+) 0 xs` |
+| `(+e)` | add `e` to the argument | `map (+2) [1..3]` → `[3,4,5]` |
+| `(:)` | two-argument cons | `(:) 0 [1]` → `[0,1]` |
+| `(:e)` | cons the argument onto `e` | `(: [2,3]) 1` → `[1,2,3]` |
+| `(-)` | two-argument subtraction | `(-) 5 3` → `2` |
 
-Another postsection example is:
+`(- e)` is **not** a section — parenthesised `-` followed by an expression is unary minus, so `(-2)` is the number −2.
+
+Other operators (`*`, `/`, `==`, `++`, …) have no section form; use a lambda or `converse` instead:
 ```miranda
-add2_odds = map (+2) . filter odd
+miranda> map (\x. x * 3) [1..3]
+Result: [3,6,9]
 ```
 
 ---
@@ -257,8 +285,12 @@ Miracula employs the off-side layout rule. Indentation levels are used to determ
 # 12. Iterative expressions
 
 Miracula supports list generator expressions:
-1. **List Ranges**: The dotdot notation generates sequence lists dynamically, e.g. `[1..100]`.
-2. **List Comprehensions**: Construct lists using generator bindings and filters.
+1. **List Ranges**: The dotdot notation generates sequence lists lazily, e.g. `[1..100]`. Only the two-endpoint form is supported — there is no step form `[1,3..9]` and no infinite form `[1..]`; for an infinite sequence use `iterate (+1) 1`.
+2. **List Comprehensions**: Construct lists using generator bindings and filters. Generators may bind patterns — an element that fails the pattern is skipped:
+```miranda
+miranda> [ k + v | (k, v) <- zip ([1,2], [10,20]) ]
+Result: [11,22]
+```
 ```miranda
 [x * x | x <- [1..10]]
 ```
@@ -296,18 +328,88 @@ sqsum x y = sq x + sq y
             where
             sq n = n * n
 ```
+`where` bindings are mutually recursive within one definition, may use patterns and multiple equations themselves, and may nest further `where` clauses under deeper indentation.
+
+## Guarded equations
+
+The right-hand side of an equation may be split into *guarded clauses*. Each clause is an expression followed by a comma and either `if condition` or `otherwise`; the clauses are tried top to bottom and the first whose condition holds is chosen:
+
+```miranda
+classify n = "negative", if n < 0
+           = "zero", if n == 0
+           = "positive", otherwise
+
+miranda> classify (-7)
+Result:
+negative
+```
+
+Guards combine with recursion and with a trailing `where` clause (the `where` scopes over *all* clauses):
+
+```miranda
+gcdm a b = gcdm (a - b) b, if a > b
+         = gcdm a (b - a), if a < b
+         = a, otherwise
+
+bmi w h = q, if q > 0
+        = 0 - q, otherwise
+          where q = w / (h * h)
+```
+
+Guards desugar into a chain of conditionals. Two rules to keep in mind:
+
+1. `otherwise` is not an identifier — it is guard syntax meaning "always true". Every guarded equation should normally end with an `otherwise` clause.
+2. **Guards do not fall through to the next equation.** If every guard of the selected equation fails, evaluation stops with `Runtime Error: Pattern matching exhausted` — the next equation is *not* tried (this differs from Miranda):
+
+```miranda
+h n = 1, if n > 10
+h n = 2
+
+miranda> h 5
+Runtime Error: Pattern matching exhausted
+```
 
 ---
 
 # 15. Pattern matching
 
-Functions can be defined across multiple equations using pattern matching:
+Functions can be defined across multiple equations using pattern matching. Equations are tried top to bottom; the first whose patterns all match is chosen:
 ```miranda
 take 0 xs     = []
 take n []     = []
 take n (x:xs) = x : take (n-1) xs
 ```
-Patterns can contain integers, characters, variables, wildcards `_`, nil `[]`, and cons patterns `(x:xs)`.
+
+The supported pattern forms are:
+
+| Pattern | Matches |
+| --- | --- |
+| `42`, `'a'` | the literal integer / character |
+| `True`, `False` | the boolean constants |
+| `x` | anything (binds `x`) |
+| `_` | anything (binds nothing) |
+| `[]` | the empty list |
+| `(x:xs)` | a non-empty list (head and tail; nestable: `(x:y:rest)`) |
+| `(p1, p2, …)` | a tuple, element-wise (patterns nest freely inside: `(x:xs, n)`) |
+
+Verified examples:
+```miranda
+swap (a, b)      = (b, a)
+firstTwo (x:y:_) = (x, y)
+bnot True        = False
+bnot False       = True
+secondOf (_, y)  = y
+
+miranda> firstTwo [7,8,9]
+Result: (7,8)
+```
+
+Limitations:
+- Non-empty bracketed list patterns are not supported: write `(x:y:[])` instead of `[x, y]`.
+- Patterns appear only on equation left-hand sides (top-level and in `where` clauses) and in comprehension generators (`(k, v) <- pairs`); a generator whose pattern fails simply skips that element.
+- If no equation matches, evaluation stops with `Runtime Error: Pattern matching exhausted`.
+
+Internally, multi-equation pattern definitions are desugared into a decision tree of conditionals and projections over plain lambda calculus.
 
 ---
 
@@ -352,7 +454,10 @@ The built-in function `show` converts any value into its printable string repres
 # 18. Miracula lexical syntax
 
 - **Comments**: Comments start with `||` and continue to the end of the line.
-- **Identifers**: Start with lowercase letters for variables and uppercase for constructors.
+- **Identifiers**: Letters, digits, and underscores, starting with a letter or underscore; lowercase initial for variables, uppercase for constructors (`True`, `False`).
+- **Keywords**: `if`, `then`, `else`, `ifzero`, `mod`, `where` are reserved. `otherwise` is only special inside guard clauses.
+- **Character escapes**: in character literals `'\n'`, `'\t'`, `'\''`, `'\\'`; in string literals `\n`, `\t`, `\"`, `\\`. Any other escaped character stands for itself.
+- **Unrecognised symbols** (`$`, `%`, `^`, `@`, a lone `!`, …) are silently skipped by the tokenizer — see the pitfall note in section 7.
 
 ---
 
@@ -436,7 +541,8 @@ All examples in this section are verified against the current interpreter.
 
 ```miranda
 miranda> seq (1 + 2) "done"
-Result: done
+Result:
+done
 miranda> sum [1..1000000]
 Result: 500000500000
 ```

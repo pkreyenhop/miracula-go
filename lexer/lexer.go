@@ -51,6 +51,7 @@ const (
 	TOK_AND
 	TOK_OR
 	TOK_DIFF
+	TOK_NOT
 )
 
 type Token struct {
@@ -194,6 +195,7 @@ func TokenizeWithPos(str string, line int) []Token {
 				addTok(Token{Type: TOK_NE})
 				i += 2
 			} else {
+				addTok(Token{Type: TOK_NOT})
 				i++
 			}
 			continue
@@ -631,6 +633,8 @@ func TokenToString(t Token) string {
 		return "\\/"
 	case TOK_DIFF:
 		return "--"
+	case TOK_NOT:
+		return "~"
 	}
 	return ""
 }
