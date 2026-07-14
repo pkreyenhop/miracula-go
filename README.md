@@ -73,9 +73,11 @@ For example, to run the interactive REPL with the standard test suite:
 ```
 Inside the REPL, type `main` to run all verification checks.
 
-### Running Advent of Code Solution
-You can run the optimized Advent of Code Day 1 solution using:
+### Example Programs
+The `examples/` directory contains a collection of small Miracula programs (classic Miranda examples such as `hanoi.m`, `queens.m`, and `primes.m`), plus complete Advent of Code 2025 solutions with their puzzle inputs under `examples/aoc25/`.
+
+Run them from the repository root so `stdenv.m` and the input file paths resolve correctly. For example, to run the optimized Advent of Code Day 1 solution:
 ```bash
-./miracula aoc.m
+./miracula examples/aoc25/aoc.m
 ```
-And enter `main` in the prompt to evaluate the results.
+And enter `main` in the prompt to evaluate the results. `examples/aoc25/aoc_all.m` runs every day's solution in one go.
