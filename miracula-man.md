@@ -28,8 +28,9 @@
 | 22. | High-performance built-in functions |
 | 23. | Examples Gallery (50 Verified Examples) |
 | 24. | Miracula for Miranda users |
-| 25. | License |
-| 26. | Bug reports |
+| 25. | Miracula for Haskell users |
+| 26. | License |
+| 27. | Bug reports |
 
 ---
 
@@ -902,12 +903,66 @@ Two behavioural notes that have no syntax at all: top-level definitions are memo
 
 ---
 
-# 25. License
+# 25. Miracula for Haskell users
+
+Coming from Haskell, the semantics will feel like home: call-by-need laziness (with sharing), currying and partial application, Hindley–Milner type inference, `where` clauses, guards with `otherwise`, list comprehensions, `[a..b]` and `[a..]` ranges, cons `:`, append `++`, composition `.`, `seq`, and `String = [Char]`. The syntax, however, is Miranda's — and three Haskell habits are outright traps.
+
+## Three silent or confusing traps
+
+1. **`||` starts a comment.** Haskell's logical OR is Miracula's end-of-line comment, so `a || b` silently evaluates to just `a` — no error. Write `a \/ b`:
+```miranda
+miranda> True || False      || everything after the bars is a comment
+Result: True
+miranda> True \/ False
+Result: True
+```
+2. **`--` is list difference**, not a comment (it is Haskell's `Data.List.\\`): `[1,2,3] -- [2]` is `[1,3]`. Comments are `||`.
+3. **`/=` is not an operator.** It lexes as `/` followed by `=`, and since `=` marks a definition you get a baffling "left hand side of binding" parse error. Write `~=` (or `!=`).
+
+## Translation table
+
+| Haskell | Miracula |
+| --- | --- |
+| `\x y -> e` | `\x. \y. e` (dot, one variable per lambda) |
+| `a && b`, `a \|\| b`, `not a` | `a & b`, `a \/ b`, `~a` |
+| `a /= b` | `a ~= b` or `a != b` |
+| `-- comment` | `\|\| comment` |
+| `Data.List.\\` | `--` (infix list difference) |
+| `head`, `tail`, `fst`, `snd` | `hd`, `tl`; define `fst (a, b) = a` yourself |
+| `f x \| x > 0 = e` | `f x = e, if x > 0` (guards come after `=`, Miranda style) |
+| `let x = e in b` | not supported — use a `where` clause |
+| `case e of ...` | not supported — use multi-equation definitions with patterns/guards |
+| `x `div` y` (backticks) | `x / y` (`/` *is* floor integer division; backticks are a lex error) |
+| `xs !! n` | `vec_get (to_vec xs) n` |
+| `[x \| x <- xs, p x]` | `[x \| x <- xs; p x]` (semicolons between qualifiers) |
+| `zip xs ys` | `zip (xs, ys)` (one tuple argument) |
+| `f $ g x` | parens, or flip the flow: `x \|> g \|> f` (`$` is a lex error) |
+| `Data.Function.&` | `\|>` (and note `&` here means AND) |
+| `f :: a -> b` | not supported — inference only, no annotations |
+| `data` / `newtype` / `type` / classes | not supported — tuples and tags |
+| `import` / modules / `do` / `IO` | none: one script; `main` is a value that gets printed; `read "file"` returns the file contents as a string |
+| `Integer` (bignum), `Double` | only `num` = 64-bit signed integer; overflow wraps |
+| `[1,3..9]` | **pitfall**: parses as `1 : [3..9]` = `[1,3,4,5,6,7,8,9]`, not `[1,3,5,7,9]` |
+| `[a, b]` as a *pattern* | `(a:b:[])` |
+| `x@(y:ys)`, `~pat`, records | not supported |
+| general sections `(2*)`, `(subtract 2)` | only `(+)`, `(+e)`, `(:)`, `(:e)`, `(-)` — lambdas otherwise |
+| `Data.Map` / `Data.Set` / arrays | native `h_insert`/`h_lookup`, `s_insert`/`member`, `to_vec`/`vec_get` (section 22) |
+
+## Semantics worth knowing
+
+- Definitions are type-checked **top-to-bottom**: no forward references and no mutual recursion between top-level definitions (unlike Haskell's whole-module scope). Within one definition, `where` bindings are mutually recursive as usual.
+- If every guard of an equation fails, evaluation stops with `Pattern matching exhausted` — guards do not fall through to the next equation, so end guarded equations with `otherwise`.
+- Top-level definitions are CAFs evaluated at most once per session, and evaluation depth is bounded only by memory, so deep `foldr`s over millions of elements are fine.
+- `foldl` in the standard environment is strict in its accumulator (Haskell's `foldl'`).
+
+---
+
+# 26. License
 
 Copyright Research Software Limited 1985-2020. Adapted for Miracula (a Go subset implementation of Miranda).
 
 ---
 
-# 26. Bug reports
+# 27. Bug reports
 
 Please report any interpreter bugs, parser errors, or REPL issues to the project maintainer.
