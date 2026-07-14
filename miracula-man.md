@@ -29,8 +29,9 @@
 | 23. | Examples Gallery (50 Verified Examples) |
 | 24. | Miracula for Miranda users |
 | 25. | Miracula for Haskell users |
-| 26. | License |
-| 27. | Bug reports |
+| 26. | Miracula for Admiran users |
+| 27. | License |
+| 28. | Bug reports |
 
 ---
 
@@ -957,12 +958,52 @@ Result: True
 
 ---
 
-# 26. License
+# 26. Miracula for Admiran users
+
+Admiran and Miracula are sibling Miranda descendants, so a lot transfers directly: `||` line comments, guards written `expression, if condition` with `otherwise`, `where` clauses, `\/` / `&` / `~` logic, the pipe operator `|>`, lazy evaluation with `seq`, strings as `[char]`, list comprehensions, `[a..b]` and infinite `[a..]` ranges — and both replaced Miranda's arbitrary-precision `num` with 64-bit signed integers. The big split: Admiran is a self-hosting *compiler* producing native executables from module trees; Miracula is an interpreter with an interactive REPL and a single-script model.
+
+## Things Admiran has that Miracula does not
+
+| Admiran | In Miracula |
+| --- | --- |
+| `%import` / `%export`, qualified modules | no module system — one script plus `stdenv.m` |
+| type declarations `f :: type` | parse error — types are inferred only |
+| algebraic types `t * ::= C1 \| C2 ...`, strict fields, `abstype`, `==` synonyms | not supported — tuples and tags |
+| `case e of ...` | not supported — multi-equation definitions with patterns/guards |
+| block comments `{\| ... \|}` | lex error — only `\|\|` line comments |
+| `\x y -> e` (patterns, arrow) | `\x. \y. e` (dot, one variable per lambda) |
+| chainable comparisons `a < b < c` | syntax error — write `a < b & b < c` |
+| step ranges `[1,3..9]` | **pitfall**: parses as `1 : [3..9]` = `[1,3,4,5,6,7,8,9]` |
+| `x $div y`, `$fn` infix syntax | lex error — `/` *is* floor integer division, `mod` is an infix keyword |
+| `^` power, bitwise operators | lex/parse errors — none built in |
+| `xs ! n`, `xs !! n` indexing | `vec_get (to_vec xs) n` |
+| hex/octal/binary literals `0xff` | **pitfall**: `0xff` lexes as `0` applied to a variable `xff` ("unbound variable: xff") — decimal only |
+| unboxed `42#` values | no unboxed values (`#` is prefix length) |
+| `$` / `$!` application operators | parens or `\|>`; force with `seq` |
+| `.>` reverse composition | chain with `\|>` instead |
+| per-type `show*`/`cmp*` instances and dictionaries | not needed: `show`, `==`, and the comparison operators are polymorphic and structural, as in Miranda |
+
+## Things Miracula has that Admiran does not
+
+- An interactive REPL: tab completion, `?identifier` source lookup, per-expression timing, Ctrl-C interruption, and definitions persisted to `~/.script.m` (sections 4–5).
+- Polymorphic structural equality and `show` over any value — no instance plumbing.
+- Native data structures and helpers aimed at puzzle-scale input crunching: persistent maps and sets, O(1) vectors, `split`/`parse_ints`, native sorts, and `memoize` (section 22).
+- `--` as infix list difference, and `!=` as an alias for `~=`.
+
+## Semantics worth knowing
+
+- Definitions are type-checked **top-to-bottom** within the one script: no forward references and no mutual recursion between top-level definitions.
+- If every guard of an equation fails, evaluation stops with `Pattern matching exhausted` rather than falling through to the next equation.
+- Top-level definitions are CAFs (evaluated at most once per session), `foldl` in the standard environment is strict in its accumulator, and evaluation depth is bounded only by memory.
+
+---
+
+# 27. License
 
 Copyright Research Software Limited 1985-2020. Adapted for Miracula (a Go subset implementation of Miranda).
 
 ---
 
-# 27. Bug reports
+# 28. Bug reports
 
 Please report any interpreter bugs, parser errors, or REPL issues to the project maintainer.
