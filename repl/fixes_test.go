@@ -176,3 +176,16 @@ func TestOperatorSections(t *testing.T) {
 		t.Errorf("operator sections: got %s", got)
 	}
 }
+
+func TestNonLinearPatterns(t *testing.T) {
+	src := `
+oeq x x = True
+oeq x y = False
+samepair (x, x) = 1
+samepair (x, y) = 0
+main = (oeq 1 1, oeq 1 2, oeq "hi" "hi", oeq [1,2] [1,3], samepair (3,3), samepair (3,4))
+`
+	if got := evalMain(t, src); got != "(True,False,True,False,1,0)" {
+		t.Errorf("non-linear patterns: got %s", got)
+	}
+}

@@ -991,8 +991,11 @@ func DesugarEquations(eqs []RawBinding) ast.Node {
 			return ast.MatchErrorNode{}
 		}
 		eq := restEqs[0]
-		var checkPats func([]string, []ast.Pat, ast.Node) ast.Node
-		checkPats = func(params []string, pats []ast.Pat, treeBody ast.Node) ast.Node {
+		// firstParam maps a pattern variable to the parameter/position of its
+		// first occurrence within one equation, so a repeated variable can be
+		// desugared into an equality check (a non-linear pattern).
+		var checkPats func([]string, []ast.Pat, ast.Node, map[string]string) ast.Node
+		checkPats = func(params []string, pats []ast.Pat, treeBody ast.Node, firstParam map[string]string) ast.Node {
 			if len(params) == 0 && len(pats) == 0 {
 				return treeBody
 			}
@@ -1009,24 +1012,38 @@ func DesugarEquations(eqs []RawBinding) ast.Node {
 				cond := ast.SubNode{Left: ast.VarNode{Name: p}, Right: ast.IntNode{Val: pt.Val}}
 				return ast.IfZeroNode{
 					Cond: cond,
-					Then: checkPats(pRest, patRest, treeBody),
+					Then: checkPats(pRest, patRest, treeBody, firstParam),
 					Else: buildDecisionTree(restEqs[1:]),
 				}
 			case ast.PatChar:
 				cond := ast.EqNode{Left: ast.VarNode{Name: p}, Right: ast.CharNode{Val: pt.Val}}
 				return ast.IfNode{
 					Cond: cond,
-					Then: checkPats(pRest, patRest, treeBody),
+					Then: checkPats(pRest, patRest, treeBody, firstParam),
 					Else: buildDecisionTree(restEqs[1:]),
 				}
 			case ast.PatBool:
 				cond := ast.EqNode{Left: ast.VarNode{Name: p}, Right: ast.BoolNode{Val: pt.Val}}
 				return ast.IfNode{
 					Cond: cond,
-					Then: checkPats(pRest, patRest, treeBody),
+					Then: checkPats(pRest, patRest, treeBody, firstParam),
 					Else: buildDecisionTree(restEqs[1:]),
 				}
 			case ast.PatVar:
+				// A variable repeated within one equation's patterns is a
+				// non-linear pattern: it matches only when the repeated
+				// positions are equal; otherwise control falls through to the
+				// next equation. (`_` is exempt — each `_` is independent.)
+				if pt.Name != "_" {
+					if firstP, seen := firstParam[pt.Name]; seen {
+						return ast.IfNode{
+							Cond: ast.EqNode{Left: ast.VarNode{Name: firstP}, Right: ast.VarNode{Name: p}},
+							Then: checkPats(pRest, patRest, treeBody, firstParam),
+							Else: buildDecisionTree(restEqs[1:]),
+						}
+					}
+					firstParam[pt.Name] = p
+				}
 				substitutedBody := treeBody
 				if pt.Name != p {
 					substitutedBody = ast.AppNode{
@@ -1034,13 +1051,13 @@ func DesugarEquations(eqs []RawBinding) ast.Node {
 						Right: ast.VarNode{Name: p},
 					}
 				}
-				return checkPats(pRest, patRest, substitutedBody)
+				return checkPats(pRest, patRest, substitutedBody, firstParam)
 			case ast.PatTuple:
 				var elmsVars []string
 				for i := 0; i < len(pt.Elems); i++ {
 					elmsVars = append(elmsVars, newVarName(fmt.Sprintf("t%d", i)))
 				}
-				innerBody := checkPats(append(elmsVars, pRest...), append(pt.Elems, patRest...), treeBody)
+				innerBody := checkPats(append(elmsVars, pRest...), append(pt.Elems, patRest...), treeBody, firstParam)
 				var wrapProjs func([]string, int, ast.Node) ast.Node
 				wrapProjs = func(vars []string, idx int, body ast.Node) ast.Node {
 					if len(vars) == 0 {
@@ -1055,7 +1072,7 @@ func DesugarEquations(eqs []RawBinding) ast.Node {
 			case ast.PatNil:
 				return ast.IfNilNode{
 					Cond: ast.VarNode{Name: p},
-					Then: checkPats(pRest, patRest, treeBody),
+					Then: checkPats(pRest, patRest, treeBody, firstParam),
 					Else: buildDecisionTree(restEqs[1:]),
 				}
 			case ast.PatCons:
@@ -1066,6 +1083,7 @@ func DesugarEquations(eqs []RawBinding) ast.Node {
 					append([]string{hVar, tVar}, pRest...),
 					append([]ast.Pat{pt.Head, pt.Tail}, patRest...),
 					treeBody,
+					firstParam,
 				)
 				return ast.IfNilNode{
 					Cond: ast.VarNode{Name: p},
@@ -1084,7 +1102,7 @@ func DesugarEquations(eqs []RawBinding) ast.Node {
 			}
 			panic("unknown pattern type")
 		}
-		return checkPats(paramNames, eq.Pats, eq.Body)
+		return checkPats(paramNames, eq.Pats, eq.Body, map[string]string{})
 	}
 
 	decisionTree := buildDecisionTree(eqs)

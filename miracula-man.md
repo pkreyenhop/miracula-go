@@ -551,9 +551,10 @@ miranda> lastx [5,6,7]
 Result: 7
 ```
 
+A variable repeated within one equation's patterns is a **non-linear pattern**: the equation matches only when the repeated positions are equal (as in Miranda), and control otherwise falls through to the next equation. So `oeq x x = True` / `oeq x y = False` gives `oeq 1 1` → `True` and `oeq 1 2` → `False`; likewise `same (x, x) = x` matches only equal pairs. The comparison is the polymorphic structural `==`, and `_` is exempt (each `_` matches independently).
+
 Limitations:
 - Non-empty bracketed list patterns are not supported: write `(x:y:[])` instead of `[x, y]`.
-- A repeated variable in one pattern, e.g. `same (x, x) = x`, is accepted but performs **no equality check** — the leftmost occurrence silently wins (`same (1, 2)` is `1`). In Miranda such a pattern matches only when the components are equal.
 - Patterns appear only on equation left-hand sides (top-level and in `where` clauses) and in comprehension generators (`(k, v) <- pairs`); a generator whose pattern fails simply skips that element.
 - If no equation matches, evaluation stops with `Runtime Error: Pattern matching exhausted`.
 
@@ -1121,7 +1122,6 @@ If you already know Miranda, Miracula will feel immediately familiar: lazy evalu
 | guard fall-through to the next equation | **failing all guards is a runtime error** (`Pattern matching exhausted`) — always end with `otherwise` |
 | continued relations `0 <= x < 10` | syntax error — write `0 <= x & x < 10` |
 | n+k patterns `f (n+1) = ...` | parse error — match on `n` and use `n - 1` |
-| repeated pattern variables `(x, x)` match only equal parts | accepted but **no equality check** — the leftmost binding silently wins |
 | multi-variable generators `a,b <- xs` | parse error — write `a <- xs; b <- xs` |
 | recurrence generators `x <- a, f x ..` | parse error — use `iterate f a` |
 | `show` restricted to monomorphic contexts in scripts | no restriction — `show` is fully polymorphic everywhere |
