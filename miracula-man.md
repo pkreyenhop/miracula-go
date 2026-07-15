@@ -580,7 +580,7 @@ Values with no useful textual form print as placeholders: functions as `\x. <clo
 
 # 19. The standard environment
 
-The standard library `stdenv.m` is automatically loaded at startup and defines common operations. The full source code of the standard environment is shown below:
+The standard library `stdenv.m` is automatically loaded at startup and defines common operations. Its core is shown below; a further set of functions adapted from the Miranda standard environment follows it in the file (listed after the code).
 
 ```miranda
 || string == [char]
@@ -623,6 +623,27 @@ repeat x = x : repeat x
 zip ([], []) = []
 zip (x:xs, y:ys) = (x, y) : zip (xs, ys)
 ```
+
+`stdenv.m` then adds the parts of the Miranda standard environment that are
+expressible in Miracula:
+
+- **combinators**: `id`, `const`, `fst`, `snd`
+- **numeric** (integer only): `neg`, `abs`, `subtract`
+- **logical folds**: `and`, `or`
+- **list building**: `concat`, `postfix`
+- **non-empty folds**: `foldl1`, `foldr1`
+- **ordering** (structural, section 7): `max2`, `min2`, `max`, `min`, `merge`, `sort`, `mkset`
+- **character predicates**: `digit`, `letter`
+- **more list processing**: `dropwhile`, `index`, `init`, `last`, `limit`, `until`, `scan`, `map2`, `transpose`
+- **text formatting**: `rep`, `spaces`, `ljustify`, `rjustify`, `cjustify`, `lay`, `layn`
+- **wider zips**: `zip3`, `zip4`, `zip5`, `zip6`
+
+Parts of the Miranda environment that Miracula cannot express are recorded (with
+the reason) in a commented block at the end of `stdenv.m` — chiefly the
+floating-point and transcendental functions (no float type), `error`/`undef`,
+`code`/`decode`, the UNIX interface, and the `show*` number formatters. Miranda's
+list-membership `member` is also omitted because that name is the native
+set-membership builtin; define `elem` in your own script if you need it.
 
 ---
 
