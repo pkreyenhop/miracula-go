@@ -85,6 +85,9 @@ where `script` (optional) is the pathname of a file containing Miracula definiti
 * `-t <file/expression>`: Evaluates the file (running the `main` function) or expression, prints only the evaluation time, and exits.
 * `-xt <file/expression>`: Evaluates the file (running the `main` function) or expression, prints both the evaluation result and the evaluation time, and exits.
 * `-h`, `-?`, `--help`: Prints a help description detailing the usage and available command flags, and exits.
+* `-cpuprofile <file>`: Writes a Go CPU profile of the evaluation to `file`.
+
+Evaluation allocates heavily (thunks, cons cells, environment frames) and runs briefly, so Miracula raises the garbage-collector target to 400% by default — roughly halving the time on allocation-bound programs at the cost of higher peak memory. Set the `GOGC` environment variable to override (e.g. `GOGC=100` for a smaller footprint, `GOGC=off` for maximum speed on a short run).
 
 The named script becomes your current script. The prompt is `miranda> `. Any command not beginning with `/`, `?`, or `!` is assumed to be an expression to be evaluated.
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"runtime/pprof"
 	"syscall"
 	"pkreyenhop.com/miracula-go/ast"
@@ -13,6 +14,15 @@ import (
 )
 
 func main() {
+	// Evaluation allocates heavily (thunks, cons cells, environment frames)
+	// and runs briefly, so the default GC target (100%) spends most of its
+	// time collecting short-lived garbage. A higher target roughly halves the
+	// time on allocation-bound workloads at the cost of ~4x peak heap. Respect
+	// an explicit GOGC if the user set one.
+	if os.Getenv("GOGC") == "" {
+		debug.SetGCPercent(400)
+	}
+
 	cpuprofile := flag.String("cpuprofile", "", "write cpu profile to `file`")
 	execX := flag.String("x", "", "evaluate FILE or COMMAND and exit")
 	execT := flag.String("t", "", "evaluate FILE or COMMAND and exit")
