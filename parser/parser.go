@@ -910,7 +910,25 @@ func (p *Parser) parsePattern() ast.Pat {
 			p.consume()
 			return ast.PatNil{}
 		}
-		p.errorf("only empty list pattern '[]' is supported directly")
+		// fixed-length list pattern [p1, p2, ...] = (p1 : p2 : ... : [])
+		var elems []ast.Pat
+		for {
+			elems = append(elems, p.parsePatternCons())
+			if p.peek().Type == lexer.TOK_COMMA {
+				p.consume()
+			} else if p.peek().Type == lexer.TOK_RBRACK {
+				p.consume()
+				break
+			} else {
+				p.errorf("expected ',' or ']' in list pattern")
+				return nil
+			}
+		}
+		var listPat ast.Pat = ast.PatNil{}
+		for i := len(elems) - 1; i >= 0; i-- {
+			listPat = ast.PatCons{Head: elems[i], Tail: listPat}
+		}
+		return listPat
 	case lexer.TOK_LPAREN:
 		p.consume()
 		var parseTuplePats func([]ast.Pat) []ast.Pat

@@ -177,6 +177,23 @@ func TestOperatorSections(t *testing.T) {
 	}
 }
 
+func TestListPatterns(t *testing.T) {
+	src := `
+describe []        = "empty"
+describe [x]       = "one"
+describe [x, y]    = "two"
+describe (x:y:xs)  = "3+"
+classify [0]       = "zero"
+classify [a, b]    = "pair"
+classify other     = "other"
+main = ([describe l | l <- [[], [1], [1,2], [1,2,3]]],
+        classify [0], classify [5], classify [1,2])
+`
+	if got := evalMain(t, src); got != `(["empty","one","two","3+"],"zero","other","pair")` {
+		t.Errorf("list patterns: got %s", got)
+	}
+}
+
 func TestNonLinearPatterns(t *testing.T) {
 	src := `
 oeq x x = True

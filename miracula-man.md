@@ -527,6 +527,7 @@ The supported pattern forms are:
 | `_` | anything (binds nothing) |
 | `[]` | the empty list |
 | `(x:xs)` | a non-empty list (head and tail; nestable: `(x:y:rest)`) |
+| `[p1, …, pn]` | a list of exactly `n` elements (sugar for `(p1 : … : pn : [])`) |
 | `(p1, p2, …)` | a tuple, element-wise (patterns nest freely inside: `(x:xs, n)`) |
 
 Verified examples:
@@ -553,8 +554,9 @@ Result: 7
 
 A variable repeated within one equation's patterns is a **non-linear pattern**: the equation matches only when the repeated positions are equal (as in Miranda), and control otherwise falls through to the next equation. So `oeq x x = True` / `oeq x y = False` gives `oeq 1 1` → `True` and `oeq 1 2` → `False`; likewise `same (x, x) = x` matches only equal pairs. The comparison is the polymorphic structural `==`, and `_` is exempt (each `_` matches independently).
 
+A fixed-length list pattern `[p1, …, pn]` matches a list of exactly `n` elements — e.g. `describe [x] = "one"`, `describe [x, y] = "two"`, `describe (x:y:xs) = "3+"` distinguish list lengths. It is sugar for `(p1 : … : pn : [])`, so the elements may themselves be patterns (`[0]`, `[(a, b)]`) and repeats obey the non-linear rule above (`[x, x]` matches only equal pairs).
+
 Limitations:
-- Non-empty bracketed list patterns are not supported: write `(x:y:[])` instead of `[x, y]`.
 - Patterns appear only on equation left-hand sides (top-level and in `where` clauses) and in comprehension generators (`(k, v) <- pairs`); a generator whose pattern fails simply skips that element.
 - If no equation matches, evaluation stops with `Runtime Error: Pattern matching exhausted`.
 
@@ -1125,8 +1127,6 @@ If you already know Miranda, Miracula will feel immediately familiar: lazy evalu
 | multi-variable generators `a,b <- xs` | parse error — write `a <- xs; b <- xs` |
 | recurrence generators `x <- a, f x ..` | parse error — use `iterate f a` |
 | `show` restricted to monomorphic contexts in scripts | no restriction — `show` is fully polymorphic everywhere |
-| list patterns `[a, b]` | parse error — write `(a:b:[])` |
-| tuple bindings in where: `(a, b) = e` | parse error — use a pattern-matching helper: `first (a, b) = a` |
 | left sections `(1+)`, `(2/)` | only *right* sections `(op e)` and bare `(op)` (section 8) — for a left section write a lambda |
 | `$fn` user-defined infix | not supported |
 | `error`, `undef` | not available |
@@ -1175,9 +1175,8 @@ Result: True
 | `a /= b` | `a ~= b` or `a != b` |
 | `-- comment` | `\|\| comment` |
 | `Data.List.\\` | `--` (infix list difference) |
-| `head`, `tail`, `fst`, `snd` | `hd`, `tl`; define `fst (a, b) = a` yourself |
+| `head`, `tail` | `hd`, `tl` (`fst`, `snd` are in the stdenv) |
 | `f x \| x > 0 = e` | `f x = e, if x > 0` (guards come after `=`, Miranda style) |
-| `let x = e in b` | not supported — use a `where` clause |
 | `case e of ...` | not supported — use multi-equation definitions with patterns/guards |
 | `x `div` y` (backticks) | `x / y` (`/` *is* floor integer division; backticks are a lex error) |
 | `xs !! n` | `vec_get (to_vec xs) n` |
@@ -1190,7 +1189,8 @@ Result: True
 | `import` / modules / `do` / `IO` | none: one script; `main` is a value that gets printed; `read "file"` returns the file contents as a string |
 | `Integer` (bignum), `Double` | only `num` = 64-bit signed integer; overflow wraps |
 | `[1,3..9]` | `[1, 3 .. 9]` = `[1,3,5,7,9]` (stepped range; needs the comma) |
-| `[a, b]` as a *pattern* | `(a:b:[])` |
+| `[a, b]` as a *pattern* | same — a fixed-length list pattern (section 15) |
+| `let x = e in b` | `let x = e in b` (single-line; or a `where` clause) |
 | `x@(y:ys)`, `~pat`, records | not supported (but `\(a,b). e` pattern lambdas work) |
 | left sections `(2*)`, `(subtract 2)` | right sections `(op e)` and bare `(op)` are supported; write a lambda for a left section |
 | `chr` / `ord` | same names: `chr :: num -> char`, `ord :: char -> num` |
