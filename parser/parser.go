@@ -107,6 +107,49 @@ func (p *Parser) consume() {
 	}
 }
 
+// patProjBindings turns a destructuring pattern LHS into the bindings that
+// project each variable out of `src`. The caller binds `src` (a fresh variable)
+// to the right-hand side once, so the RHS is evaluated a single time and shared.
+// buildLetNode groups let/where raw bindings by name (multi-equation
+// functions), desugars each, and wraps the body in a LetNode (letrec).
+func buildLetNode(raws []RawBinding, body ast.Node) ast.Node {
+	grouped := make(map[string][]RawBinding)
+	var order []string
+	for _, b := range raws {
+		if _, ok := grouped[b.FName]; !ok {
+			order = append(order, b.FName)
+		}
+		grouped[b.FName] = append(grouped[b.FName], b)
+	}
+	var desugared []ast.Binding
+	for _, name := range order {
+		desugared = append(desugared, ast.Binding{Name: name, Expr: DesugarEquations(grouped[name])})
+	}
+	return ast.LetNode{Bindings: desugared, Body: body}
+}
+
+func patProjBindings(pat ast.Pat, src ast.Node) []RawBinding {
+	switch pt := pat.(type) {
+	case ast.PatVar:
+		if pt.Name == "_" {
+			return nil
+		}
+		return []RawBinding{{FName: pt.Name, Body: src}}
+	case ast.PatTuple:
+		var out []RawBinding
+		for i, e := range pt.Elems {
+			out = append(out, patProjBindings(e, ast.ProjNode{Index: i, Tuple: src})...)
+		}
+		return out
+	case ast.PatCons:
+		out := patProjBindings(pt.Head, ast.AppNode{Left: ast.VarNode{Name: "hd"}, Right: src})
+		out = append(out, patProjBindings(pt.Tail, ast.AppNode{Left: ast.VarNode{Name: "tl"}, Right: src})...)
+		return out
+	}
+	// literal and wildcard patterns bind nothing
+	return nil
+}
+
 func isAssignment(tokens []lexer.Token) bool {
 	depth := 0
 	for _, t := range tokens {
@@ -212,19 +255,29 @@ func (p *Parser) parseRHS() ast.Node {
 				return nil
 			}
 			if isAssignment(p.tokens[p.pos:]) {
-				nameTok := p.peek()
-				if nameTok.Type != lexer.TOK_VAR {
-					p.errorf("left hand side of local binding must start with an identifier")
+				var bs []RawBinding
+				if p.peek().Type == lexer.TOK_LPAREN {
+					// destructuring binding: (a, b) = e  /  (x:xs) = e
+					pat := p.parsePattern()
+					localBody := p.parseRHS()
+					dt := newVarName("dt")
+					bs = []RawBinding{{FName: dt, Body: localBody}}
+					bs = append(bs, patProjBindings(pat, ast.VarNode{Name: dt})...)
+				} else {
+					nameTok := p.peek()
+					if nameTok.Type != lexer.TOK_VAR {
+						p.errorf("left hand side of local binding must start with an identifier")
+					}
+					p.consume()
+					var pats []ast.Pat
+					for p.peek().Type != lexer.TOK_ASSIGN {
+						pats = append(pats, p.parsePattern())
+					}
+
+					// Parse the RHS of the local binding recursively
+					localBody := p.parseRHS()
+					bs = []RawBinding{{FName: nameTok.Str, Pats: pats, Body: localBody}}
 				}
-				p.consume()
-				var pats []ast.Pat
-				for p.peek().Type != lexer.TOK_ASSIGN {
-					pats = append(pats, p.parsePattern())
-				}
-				
-				// Parse the RHS of the local binding recursively
-				localBody := p.parseRHS()
-				b := RawBinding{FName: nameTok.Str, Pats: pats, Body: localBody}
 
 				var rest []RawBinding
 				if p.peek().Type == lexer.TOK_SEMICOLON {
@@ -235,7 +288,7 @@ func (p *Parser) parseRHS() ast.Node {
 				} else {
 					p.errorf("expected ';' or '}' in where bindings")
 				}
-				return append([]RawBinding{b}, rest...)
+				return append(bs, rest...)
 			} else {
 				p.errorf("expected local binding in where clause")
 				return nil
@@ -344,6 +397,41 @@ func (p *Parser) parseExpr() ast.Node {
 		p.consume()
 		fBranch := p.parseExpr()
 		e = ast.IfNode{Cond: cond, Then: tBranch, Else: fBranch}
+	case lexer.TOK_LET:
+		// let b1 ; b2 ; ... in body   (bindings may destructure: (a,b) = e)
+		p.consume()
+		var raws []RawBinding
+		for {
+			if p.peek().Type == lexer.TOK_LPAREN {
+				pat := p.parsePattern()
+				body := p.parseRHS()
+				dt := newVarName("dt")
+				raws = append(raws, RawBinding{FName: dt, Body: body})
+				raws = append(raws, patProjBindings(pat, ast.VarNode{Name: dt})...)
+			} else {
+				nameTok := p.peek()
+				if nameTok.Type != lexer.TOK_VAR {
+					p.errorf("expected identifier or pattern in 'let' binding")
+				}
+				p.consume()
+				var pats []ast.Pat
+				for p.peek().Type != lexer.TOK_ASSIGN {
+					pats = append(pats, p.parsePattern())
+				}
+				body := p.parseRHS()
+				raws = append(raws, RawBinding{FName: nameTok.Str, Pats: pats, Body: body})
+			}
+			if p.peek().Type == lexer.TOK_SEMICOLON {
+				p.consume()
+				continue
+			}
+			break
+		}
+		if p.peek().Type != lexer.TOK_IN {
+			p.errorf("expected 'in' after 'let' bindings")
+		}
+		p.consume()
+		e = buildLetNode(raws, p.parseExpr())
 	default:
 		e = p.parsePipe()
 	}

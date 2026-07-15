@@ -435,9 +435,10 @@ func LoadScriptFile(filename string, env *ast.Env, typeEnv *typecheck.TypeEnv) (
 			}
 		}
 
-		wrapped := lexer.WrapWhereOnLine(filtered)
-		if len(wrapped) > 0 {
-			layoutLines = append(layoutLines, lexer.LayoutLine{Indent: indent, Toks: wrapped})
+		for _, ll := range lexer.SplitWhereLine(indent, filtered) {
+			if len(ll.Toks) > 0 {
+				layoutLines = append(layoutLines, ll)
+			}
 		}
 	}
 
@@ -772,9 +773,10 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 					filtered = append(filtered, t)
 				}
 			}
-			wrapped := lexer.WrapWhereOnLine(filtered)
-			if len(wrapped) > 0 {
-				layoutLines = append(layoutLines, lexer.LayoutLine{Indent: indent, Toks: wrapped})
+			for _, ll := range lexer.SplitWhereLine(indent, filtered) {
+				if len(ll.Toks) > 0 {
+					layoutLines = append(layoutLines, ll)
+				}
 			}
 		}
 		tokens = lexer.ApplyLayout(layoutLines)
@@ -1186,7 +1188,7 @@ func EvaluateAndExit(env *ast.Env, typeEnv *typecheck.TypeEnv, parameter string,
 		}
 
 		var layoutLines []lexer.LayoutLine
-		layoutLines = append(layoutLines, lexer.LayoutLine{Indent: 0, Toks: lexer.WrapWhereOnLine(filtered)})
+		layoutLines = append(layoutLines, lexer.SplitWhereLine(0, filtered)...)
 		fileTokens := lexer.ApplyLayout(layoutLines)
 		segments := lexer.SplitTokens(fileTokens)
 		if len(segments) == 0 {

@@ -93,3 +93,46 @@ main = sort_by scmp ["pear", "apple", "fig", "banana"]
 		t.Errorf("string sort: got %s", got)
 	}
 }
+
+func TestBitwise(t *testing.T) {
+	src := "main = (xor 12 10, band 12 10, bor 12 10, shl 1 4, shr 255 4)\n"
+	if got := evalMain(t, src); got != "(6,8,14,16,15)" {
+		t.Errorf("bitwise: got %s", got)
+	}
+}
+
+func TestMemofix(t *testing.T) {
+	src := `
+fib = memofix f
+      where f rec n = n, if n < 2
+                    = rec (n - 1) + rec (n - 2), otherwise
+main = fib 40
+`
+	if got := evalMain(t, src); got != "102334155" {
+		t.Errorf("memofix fib: got %s", got)
+	}
+}
+
+func TestLetAndDestructure(t *testing.T) {
+	if got := evalMain(t, "main = let x = 6; y = x * 2 in x + y\n"); got != "18" {
+		t.Errorf("let: got %s", got)
+	}
+	src := `
+divmod a b = (a / b, a mod b)
+main = r where (q, r) = divmod 17 5
+`
+	if got := evalMain(t, src); got != "2" {
+		t.Errorf("where destructure: got %s", got)
+	}
+}
+
+func TestPriorityQueue(t *testing.T) {
+	src := `
+drain pq = if pq_null pq then []
+           else let (p, v, rest) = pq_pop pq in (p, v) : drain rest
+main = drain (pq_push (pq_push (pq_push pq_empty 3 30) 1 10) 2 20)
+`
+	if got := evalMain(t, src); got != "[(1,10),(2,20),(3,30)]" {
+		t.Errorf("priority queue: got %s", got)
+	}
+}

@@ -190,6 +190,18 @@ miranda> ifzero (3 - 3) then 1 else 2
 Result: 1
 ```
 
+## Local bindings: `let … in`
+A `let` expression introduces local bindings for its body, body-first (the
+complement of `where`, which comes body-last). Bindings are separated by `;` and
+must fit on one logical line (use `where` for multi-line blocks); like `where`
+they are mutually recursive and may bind patterns (see section 14):
+```miranda
+miranda> let x = 6; y = x * 2 in x + y
+Result: 18
+miranda> let (q, r) = (17 / 5, 17 mod 5) in q * 100 + r
+Result: 302
+```
+
 ---
 
 # 7. Operators and their binding powers
@@ -275,7 +287,7 @@ An identifier consists of a letter followed by zero or more letters, digits, und
 ## Reserved words
 The following words are reserved and cannot be used as identifiers:
 ```miranda
-ifzero if then else mod where
+ifzero if then else mod where let in
 ```
 
 ## Predefined identifiers
@@ -287,8 +299,10 @@ The following identifiers are predefined in the Miracula stdenv and always in sc
   - string processing: `split`, `parse_ints`
   - maps and sets: `empty_map`, `h_insert`, `h_lookup`, `h_lookup_def`, `empty_set`, `member`
   - vectors: `to_vec`, `vec_get`, `vec_set`, `vec_len`, `vec_to_list`
+  - priority queues: `pq_empty`, `pq_push`, `pq_pop`, `pq_null`
+  - bitwise: `xor`, `band`, `bor`, `shl`, `shr`
   - sorting: `sort_ints`, `sort_by`, `sort_edges`, `sort_pts`
-  - other: `memoize`, `list_get`, `list_set`
+  - other: `memoize`, `memofix`, `list_get`, `list_set`
 - **Library Functions**: `foldl`, `foldr`, `converse`, `sum`, `map`, `filter`, `take`, `drop`, `takewhile`, `iterate`, `repeat`, `zip`
 
 A local binding — a lambda parameter, a `where` binding, or a comprehension generator — **shadows** a built-in of the same name within its scope, so naming a helper `split` or `member` is safe. At the top level the native built-in names above remain reserved: a script definition of the same name does not override the built-in.
@@ -427,6 +441,18 @@ sqsum x y = sq x + sq y
 ```
 `where` bindings are mutually recursive within one definition, may use patterns and multiple equations themselves, and may nest further `where` clauses under deeper indentation.
 
+## Destructuring bindings
+
+A `where` or `let` binding may have a tuple or cons **pattern** on the left, binding all of its variables at once (the right-hand side is evaluated once and shared):
+```miranda
+roots a b c = (lo, hi)
+              where
+              (lo, hi) = (a - b, a + c)
+
+firstTwo xs = a + b where (a:b:rest) = xs
+```
+This replaces the Miranda idiom of writing a projection helper (`fst`, `snd`) for every tuple result — handy for functions that return a pair, such as a state-threading step.
+
 ## Guarded equations
 
 The right-hand side of an equation may be split into *guarded clauses*. Each clause is an expression followed by a comma and either `if condition` or `otherwise`; the clauses are tried top to bottom and the first whose condition holds is chosen:
@@ -538,6 +564,7 @@ The type formers are:
 | map | associative map, keys `num` or `[char]` | `Map(a, b)` |
 | set | membership set | `Set(a)` |
 | vec | vector with O(1) indexed access | `Vec(a)` |
+| pq | priority queue (min-heap, integer priorities) | `PQ(a)` |
 
 Type variables print as `a`, `b`, `c`, …. Polymorphic definitions are generalised automatically, e.g. the inferred type of `map` is `(a -> b) -> [a] -> [b]`.
 
@@ -862,7 +889,66 @@ Result: 222
 
 The first call computes; the second returns the cached result. Note that scripts are type-checked top-to-bottom, so a recursive function cannot refer to its own memoized wrapper defined later — `memoize` caches whole top-level calls.
 
-## 22.8 A complete worked example
+`memofix` memoizes a *recursive* function without threading a cache by hand. It takes an **open** recursion — a function whose first parameter is the recursive call — and returns the memoized fixpoint, so the recursive calls hit the cache too:
+
+| Function | Signature | Description |
+| --- | --- | --- |
+| `memofix` | `((* -> **) -> * -> **) -> (* -> **)` | Memoized open recursion: `memofix f` is the least function `g` with `g x = f g x`, caching by `x`. |
+
+```miranda
+fib = memofix f
+      where f rec n = n, if n < 2
+                    = rec (n - 1) + rec (n - 2), otherwise
+
+miranda> fib 40
+Result: 102334155
+```
+
+For a DP over several inputs, make the argument a tuple: `count = memofix f where f rec (a, b) = … rec (a', b') …`. This is how the Plutonian-pebbles solver ([aoc24/aoc24-11.m](aoc24/aoc24-11.m)) counts stones after 75 blinks with no memo map in sight.
+
+## 22.8 Bitwise operators: `xor`, `band`, `bor`, `shl`, `shr`
+
+There are no bitwise infix operators; these builtins act on the 64-bit integer representation.
+
+| Function | Signature | Description |
+| --- | --- | --- |
+| `xor` | `num -> num -> num` | bitwise exclusive-or |
+| `band` | `num -> num -> num` | bitwise and (`and`/`or` are the stdenv list folds) |
+| `bor` | `num -> num -> num` | bitwise or |
+| `shl` | `num -> num -> num` | left shift (`shl a n` = `a` × 2ⁿ) |
+| `shr` | `num -> num -> num` | right shift (arithmetic) |
+
+```miranda
+miranda> xor 12 10
+Result: 6
+miranda> (shl 1 4, shr 255 4, bor (shl 1 3) (shl 1 5))
+Result: (16,15,40)
+```
+
+A common idiom is a bitmask visited-set: `seen2 = bor seen (shl 1 i)`, tested with `band seen (shl 1 i) ~= 0`.
+
+## 22.9 Priority queues: `pq_empty`, `pq_push`, `pq_pop`, `pq_null`
+
+A persistent min-heap keyed by an integer priority — the right structure for Dijkstra / A* frontiers.
+
+| Function | Signature | Description |
+| --- | --- | --- |
+| `pq_empty` | `pq *` | the empty queue |
+| `pq_push` | `pq * -> num -> * -> pq *` | queue with `(priority, value)` added; the original is unchanged |
+| `pq_pop` | `pq * -> (num, *, pq *)` | the lowest-priority `(priority, value)` and the rest of the queue; runtime error if empty |
+| `pq_null` | `pq * -> bool` | is the queue empty |
+
+```miranda
+drain pq = if pq_null pq then []
+           else let (p, v, rest) = pq_pop pq in (p, v) : drain rest
+
+miranda> drain (pq_push (pq_push (pq_push pq_empty 3 'c') 1 'a') 2 'b')
+Result: [(1,'a'),(2,'b'),(3,'c')]
+```
+
+The Reindeer-maze solver ([aoc24/aoc24-16.m](aoc24/aoc24-16.m)) runs Dijkstra over `(cell, direction)` states with `pq_pop`/`pq_push` and reads the popped triple with a destructuring `let`.
+
+## 22.10 A complete worked example
 
 The Advent of Code 2025 Day 8 solver ([aoc8.m](aoc8.m)) combines most of these: `read` + `parse_ints` for input, a list comprehension over all point pairs, `sort_edges` + `take` for the 1000 shortest, and maps for union-find:
 

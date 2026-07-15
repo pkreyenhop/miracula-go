@@ -53,6 +53,8 @@ const (
 	TOK_DIFF
 	TOK_NOT
 	TOK_PIPEGT
+	TOK_LET
+	TOK_IN
 	// TOK_ERROR marks a character the lexer does not recognise; the parser
 	// rejects it with a positioned parse error instead of skipping it.
 	TOK_ERROR
@@ -346,6 +348,10 @@ func TokenizeWithPos(str string, line int) []Token {
 				tokType = TOK_MOD
 			case "where":
 				tokType = TOK_WHERE
+			case "let":
+				tokType = TOK_LET
+			case "in":
+				tokType = TOK_IN
 			default:
 				tokType = TOK_VAR
 			}
@@ -385,6 +391,29 @@ func WrapWhereOnLine(toks []Token) []Token {
 type LayoutLine struct {
 	Indent int
 	Toks   []Token
+}
+
+// SplitWhereLine handles a `where` that is followed by binding tokens on the
+// same line. It splits the line so the binding(s) after `where` become their
+// own layout line, indented to the binding's column. The offside rule
+// (ApplyLayout) then treats following, more-indented lines as continuations of
+// that binding — which the older per-line WrapWhereOnLine could not, since it
+// closed the where block at the end of the where line and dropped multi-line
+// guard clauses. `indent` is the leading-whitespace count of the line; token
+// Col is 1-based within the (whitespace-stripped) line, so the split binding's
+// indent is indent + Col - 1.
+func SplitWhereLine(indent int, toks []Token) []LayoutLine {
+	for i, t := range toks {
+		if t.Type == TOK_WHERE && i+1 < len(toks) {
+			head := toks[:i+1]
+			tail := toks[i+1:]
+			tailIndent := indent + tail[0].Col - 1
+			out := []LayoutLine{{Indent: indent, Toks: head}}
+			out = append(out, SplitWhereLine(tailIndent, tail)...)
+			return out
+		}
+	}
+	return []LayoutLine{{Indent: indent, Toks: toks}}
 }
 
 func tokenDepthDelta(toks []Token) int {
@@ -500,6 +529,7 @@ func SplitTokens(tokens []Token) [][]Token {
 	var segments [][]Token
 	var current []Token
 	depth := 0
+	letDepth := 0
 
 	for _, t := range tokens {
 		if t.Type == TOK_EOF {
@@ -511,9 +541,17 @@ func SplitTokens(tokens []Token) [][]Token {
 			newDepth++
 		case TOK_RBRACE, TOK_RPAREN, TOK_RBRACK:
 			newDepth--
+		case TOK_LET:
+			letDepth++
+		case TOK_IN:
+			if letDepth > 0 {
+				letDepth--
+			}
 		}
 
-		if t.Type == TOK_SEMICOLON && depth == 0 {
+		// a ';' separating let-bindings (between `let` and its `in`) is not a
+		// top-level definition separator
+		if t.Type == TOK_SEMICOLON && depth == 0 && letDepth == 0 {
 			segment := append([]Token(nil), current...)
 			var eof Token
 			if len(current) > 0 {

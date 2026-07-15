@@ -101,6 +101,15 @@ func (t VecType) String() string {
 	return "Vec(" + t.Elem.String() + ")"
 }
 
+// PQType is a priority queue whose values have type Elem (priorities are num).
+type PQType struct {
+	Elem Type
+}
+
+func (t PQType) String() string {
+	return "PQ(" + t.Elem.String() + ")"
+}
+
 type Scheme struct {
 	Vars []int
 	Ty   Type
@@ -195,6 +204,10 @@ func (sub Substitution) applyWithSeen(t Type, seen map[int]bool) Type {
 		}
 	case VecType:
 		return VecType{
+			Elem: sub.applyWithSeen(ty.Elem, seen),
+		}
+	case PQType:
+		return PQType{
 			Elem: sub.applyWithSeen(ty.Elem, seen),
 		}
 	}
@@ -305,6 +318,11 @@ func (s1 Substitution) Unify(t1, t2 Type) (Substitution, error) {
 			return s1.Unify(ty1.Elem, ty2.Elem)
 		}
 		return nil, fmt.Errorf("cannot unify %s and %s", t1, t2)
+	case PQType:
+		if ty2, ok := t2.(PQType); ok {
+			return s1.Unify(ty1.Elem, ty2.Elem)
+		}
+		return nil, fmt.Errorf("cannot unify %s and %s", t1, t2)
 	}
 
 	return nil, fmt.Errorf("cannot unify %s and %s", t1, t2)
@@ -341,6 +359,8 @@ func occurs(id int, t Type) bool {
 	case SetType:
 		return occurs(id, ty.Elem)
 	case VecType:
+		return occurs(id, ty.Elem)
+	case PQType:
 		return occurs(id, ty.Elem)
 	}
 	return false
@@ -380,6 +400,10 @@ func freeVars(t Type) map[int]bool {
 			f[k] = true
 		}
 	case VecType:
+		for k := range freeVars(ty.Elem) {
+			f[k] = true
+		}
+	case PQType:
 		for k := range freeVars(ty.Elem) {
 			f[k] = true
 		}
@@ -972,6 +996,25 @@ func DefaultTypeEnv() *TypeEnv {
 	env.Map["vec_len"] = Scheme{Vars: []int{0}, Ty: FunType{From: VecType{Elem: VarType{Id: 0}}, To: TInt}}
 	env.Map["vec_set"] = Scheme{Vars: []int{0}, Ty: FunType{From: VecType{Elem: VarType{Id: 0}}, To: FunType{From: TInt, To: FunType{From: VarType{Id: 0}, To: VecType{Elem: VarType{Id: 0}}}}}}
 	env.Map["vec_to_list"] = Scheme{Vars: []int{0}, Ty: FunType{From: VecType{Elem: VarType{Id: 0}}, To: ListType{Elem: VarType{Id: 0}}}}
+
+	// bitwise operators on integers: num -> num -> num
+	numNumNum := FunType{From: TInt, To: FunType{From: TInt, To: TInt}}
+	env.Map["xor"] = Scheme{Vars: nil, Ty: numNumNum}
+	env.Map["band"] = Scheme{Vars: nil, Ty: numNumNum}
+	env.Map["bor"] = Scheme{Vars: nil, Ty: numNumNum}
+	env.Map["shl"] = Scheme{Vars: nil, Ty: numNumNum}
+	env.Map["shr"] = Scheme{Vars: nil, Ty: numNumNum}
+
+	// memofix :: ((a -> b) -> a -> b) -> a -> b  (memoized open recursion)
+	aToB := FunType{From: VarType{Id: 0}, To: VarType{Id: 1}}
+	env.Map["memofix"] = Scheme{Vars: []int{0, 1}, Ty: FunType{From: FunType{From: aToB, To: aToB}, To: aToB}}
+
+	// priority queue (min-heap keyed by an integer priority)
+	pqA := PQType{Elem: VarType{Id: 0}}
+	env.Map["pq_empty"] = Scheme{Vars: []int{0}, Ty: pqA}
+	env.Map["pq_push"] = Scheme{Vars: []int{0}, Ty: FunType{From: pqA, To: FunType{From: TInt, To: FunType{From: VarType{Id: 0}, To: pqA}}}}
+	env.Map["pq_pop"] = Scheme{Vars: []int{0}, Ty: FunType{From: pqA, To: TupleType{Elems: []Type{TInt, VarType{Id: 0}, pqA}}}}
+	env.Map["pq_null"] = Scheme{Vars: []int{0}, Ty: FunType{From: pqA, To: TBool}}
 
 	return env
 }

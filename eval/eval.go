@@ -741,6 +741,16 @@ machine:
 			v = node
 		case ast.VecSetPartialNode2:
 			v = node
+		case ast.BitopPartialNode:
+			v = node
+		case ast.MemoFixNode:
+			v = node
+		case ast.PQNode:
+			v = node
+		case ast.PQPushPartial1:
+			v = node
+		case ast.PQPushPartial2:
+			v = node
 		case ast.LamNode:
 			v = ast.ClosureNode{Var: node.Var, Body: node.Body, Env: env}
 		case ast.ClosureNode:
@@ -851,12 +861,14 @@ machine:
 		case ast.VarNode:
 			name := node.Name
 			switch name {
-			case "hd", "tl", "show", "read", "lines", "numval", "length", "reverse", "seq", "h_lookup", "h_insert", "member", "split", "parse_ints", "list_get", "list_set", "memoize", "sort_by", "sort_ints", "sort_edges", "sort_pts", "h_lookup_def", "s_insert", "to_vec", "vec_get", "vec_set", "vec_len", "vec_to_list":
+			case "hd", "tl", "show", "read", "lines", "numval", "length", "reverse", "seq", "h_lookup", "h_insert", "member", "split", "parse_ints", "list_get", "list_set", "memoize", "sort_by", "sort_ints", "sort_edges", "sort_pts", "h_lookup_def", "s_insert", "to_vec", "vec_get", "vec_set", "vec_len", "vec_to_list", "xor", "band", "bor", "shl", "shr", "memofix", "pq_push", "pq_pop", "pq_null":
 				v = node
 			case "empty_map":
 				v = ast.MapNode{Tree: nil}
 			case "empty_set":
 				v = ast.SetNode{Tree: nil}
+			case "pq_empty":
+				v = ast.PQNode{Heap: nil}
 			}
 			if v != nil {
 				break
@@ -1524,6 +1536,29 @@ func applyPartial(env *ast.Env, fVal ast.Node, node ast.AppNode) ast.Node {
 			listNode = ast.ConsNode{Head: ast.IntNode{Val: newList[i]}, Tail: listNode}
 		}
 		return listNode
+	case ast.BitopPartialNode:
+		b := Whnf(env, node.Right)
+		bi, ok := b.(ast.IntNode)
+		if !ok {
+			panic(ast.RuntimeError{Msg: f.Op + ": expects an integer"})
+		}
+		a := f.A
+		switch f.Op {
+		case "xor":
+			return ast.IntNode{Val: a ^ bi.Val}
+		case "band":
+			return ast.IntNode{Val: a & bi.Val}
+		case "bor":
+			return ast.IntNode{Val: a | bi.Val}
+		case "shl", "shr":
+			if bi.Val < 0 {
+				panic(ast.RuntimeError{Msg: f.Op + ": negative shift count"})
+			}
+			if f.Op == "shl" {
+				return ast.IntNode{Val: a << uint64(bi.Val)}
+			}
+			return ast.IntNode{Val: a >> uint64(bi.Val)}
+		}
 	case ast.MemoizeNode:
 		argVal := Whnf(env, node.Right)
 		if i, isInt := argVal.(ast.IntNode); isInt {
@@ -1540,6 +1575,38 @@ func applyPartial(env *ast.Env, fVal ast.Node, node ast.AppNode) ast.Node {
 			return val
 		}
 		res := Whnf(env, ast.AppNode{Left: f.Func, Right: argVal})
+		f.Cache[key] = res
+		return res
+	case ast.PQPushPartial1:
+		prio := Whnf(env, node.Right)
+		pi, ok := prio.(ast.IntNode)
+		if !ok {
+			panic(ast.RuntimeError{Msg: "pq_push: priority must be an integer"})
+		}
+		return ast.PQPushPartial2{Heap: f.Heap, Prio: pi.Val}
+	case ast.PQPushPartial2:
+		val := bindArg(env, node.Right)
+		return ast.PQNode{Heap: f.Heap.Insert(f.Prio, val)}
+	case ast.MemoFixNode:
+		// like memoize, but the wrapped function receives the memoized fixpoint
+		// itself as its first argument (open recursion): (f self) arg. The two
+		// applications are reduced in separate steps rather than as a nested
+		// AppNode, which the trampoline handles more reliably.
+		argVal := Whnf(env, node.Right)
+		recFn := Whnf(env, ast.AppNode{Left: f.Func, Right: f})
+		if i, isInt := argVal.(ast.IntNode); isInt {
+			if val, ok := f.IntCache[i.Val]; ok {
+				return val
+			}
+			res := Whnf(env, ast.AppNode{Left: recFn, Right: argVal})
+			f.IntCache[i.Val] = res
+			return res
+		}
+		key := PrintNode(env, argVal)
+		if val, ok := f.Cache[key]; ok {
+			return val
+		}
+		res := Whnf(env, ast.AppNode{Left: recFn, Right: argVal})
 		f.Cache[key] = res
 		return res
 	case ast.SortByPartialNode:
@@ -1780,6 +1847,44 @@ func applyBuiltin(env *ast.Env, name string, node ast.AppNode) ast.Node {
 	case "memoize":
 		fn := Whnf(env, node.Right)
 		return ast.MemoizeNode{Func: fn, Cache: make(map[string]ast.Node), IntCache: make(map[int64]ast.Node)}
+	case "xor", "band", "bor", "shl", "shr":
+		a := Whnf(env, node.Right)
+		ai, ok := a.(ast.IntNode)
+		if !ok {
+			panic(ast.RuntimeError{Msg: name + ": expects an integer"})
+		}
+		return ast.BitopPartialNode{Op: name, A: ai.Val}
+	case "memofix":
+		fn := Whnf(env, node.Right)
+		return ast.MemoFixNode{Func: fn, Cache: make(map[string]ast.Node), IntCache: make(map[int64]ast.Node)}
+	case "pq_push":
+		pqVal := Whnf(env, node.Right)
+		pq, ok := pqVal.(ast.PQNode)
+		if !ok {
+			panic(ast.RuntimeError{Msg: "pq_push: expected a priority queue"})
+		}
+		return ast.PQPushPartial1{Heap: pq.Heap}
+	case "pq_pop":
+		pqVal := Whnf(env, node.Right)
+		pq, ok := pqVal.(ast.PQNode)
+		if !ok {
+			panic(ast.RuntimeError{Msg: "pq_pop: expected a priority queue"})
+		}
+		if pq.Heap == nil {
+			panic(ast.RuntimeError{Msg: "pq_pop: empty priority queue"})
+		}
+		return ast.TupleNode{Elems: []ast.Node{
+			ast.IntNode{Val: pq.Heap.Prio},
+			pq.Heap.Val,
+			ast.PQNode{Heap: pq.Heap.DeleteMin()},
+		}}
+	case "pq_null":
+		pqVal := Whnf(env, node.Right)
+		pq, ok := pqVal.(ast.PQNode)
+		if !ok {
+			panic(ast.RuntimeError{Msg: "pq_null: expected a priority queue"})
+		}
+		return ast.BoolNode{Val: pq.Heap == nil}
 	case "sort_ints":
 		listVal := Whnf(env, node.Right)
 		var elems []int64
@@ -1979,6 +2084,16 @@ func PrintNode(env *ast.Env, n ast.Node) string {
 		return "<memoized>"
 	case ast.SortByPartialNode:
 		return "<sort_by partial>"
+	case ast.BitopPartialNode:
+		return "<" + node.Op + " partial>"
+	case ast.MemoFixNode:
+		return "<memofix>"
+	case ast.PQNode:
+		return "<pq>"
+	case ast.PQPushPartial1:
+		return "<pq_push partial>"
+	case ast.PQPushPartial2:
+		return "<pq_push partial>"
 	case ast.HLookupDefPartialNode1:
 		return "<h_lookup_def partial 1>"
 	case ast.HLookupDefPartialNode2:
@@ -2146,6 +2261,16 @@ func DebugPrintNode(n ast.Node) string {
 		return "Memoize"
 	case ast.SortByPartialNode:
 		return "SortByPartial"
+	case ast.BitopPartialNode:
+		return "BitopPartial"
+	case ast.MemoFixNode:
+		return "MemoFix"
+	case ast.PQNode:
+		return "PQ"
+	case ast.PQPushPartial1:
+		return "PQPushPartial1"
+	case ast.PQPushPartial2:
+		return "PQPushPartial2"
 	case ast.HLookupDefPartialNode1:
 		return "HLookupDef1"
 	case ast.HLookupDefPartialNode2:

@@ -115,6 +115,37 @@ type SortByPartialNode struct {
 	Cmp Node
 }
 
+// BitopPartialNode is a bitwise builtin (xor/band/bor/shl/shr) applied to its
+// first integer argument, awaiting the second.
+type BitopPartialNode struct {
+	Op string
+	A  int64
+}
+
+// MemoFixNode is the result of `memofix f`: a memoized fixpoint. Applying it to
+// an argument x evaluates `f self x` (so f's first parameter is the recursive
+// call) and caches the result by x, exactly like MemoizeNode. The caches are
+// Go maps, shared across copies of the node, so recursive calls hit them.
+type MemoFixNode struct {
+	Func     Node
+	Cache    map[string]Node
+	IntCache map[int64]Node
+}
+
+// PQNode is a priority-queue value wrapping a persistent min-heap.
+type PQNode struct {
+	Heap *PQHeap
+}
+
+// PQPushPartial1/2 are pq_push (3-arg) applied to one/two of its arguments.
+type PQPushPartial1 struct {
+	Heap *PQHeap
+}
+type PQPushPartial2 struct {
+	Heap *PQHeap
+	Prio int64
+}
+
 type HLookupDefPartialNode1 struct {
 	Tree *MapTree
 }
@@ -246,6 +277,11 @@ func (ListSetPartialNode1) isNode()    {}
 func (ListSetPartialNode2) isNode()    {}
 func (MemoizeNode) isNode()            {}
 func (SortByPartialNode) isNode()      {}
+func (BitopPartialNode) isNode()       {}
+func (MemoFixNode) isNode()            {}
+func (PQNode) isNode()                 {}
+func (PQPushPartial1) isNode()         {}
+func (PQPushPartial2) isNode()         {}
 func (HLookupDefPartialNode1) isNode() {}
 func (HLookupDefPartialNode2) isNode() {}
 func (VecNode) isNode()                {}

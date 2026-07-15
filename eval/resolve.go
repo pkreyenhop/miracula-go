@@ -15,6 +15,9 @@ var resolverBuiltins = map[string]bool{
 	"s_insert": true,
 	"to_vec":   true, "vec_get": true, "vec_set": true, "vec_len": true,
 	"vec_to_list": true,
+	"xor":        true, "band": true, "bor": true, "shl": true, "shr": true,
+	"memofix":  true,
+	"pq_empty": true, "pq_push": true, "pq_pop": true, "pq_null": true,
 }
 
 // Resolve rewrites variable references in a freshly desugared definition or
