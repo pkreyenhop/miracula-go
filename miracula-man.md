@@ -227,7 +227,7 @@ Here is the complete list of prefix and infix operators supported by Miracula, i
 | `~` | prefix (logical negation; binds looser than comparisons, so `~ a == b` reads `~(a == b)`) |
 | `:` | right associative (list cons) |
 | `++` `--` | right associative (list append, list difference) |
-| `==` `~=` `<` `<=` `>` `>=` | comparisons (non-associative: `a < b < c` is a syntax error) |
+| `==` `~=` `<` `<=` `>` `>=` | comparisons (a chain `a < b <= c` is a *continued relation*: it desugars to `(a < b) & (b <= c)`) |
 | `+` `-` | left associative (addition, subtraction) |
 | `*` `/` `mod` | left associative (multiplication, integer division, modulo — all one level) |
 | `^` | right associative (integer exponentiation: `2 ^ 3 ^ 2` is `2 ^ (3 ^ 2)`) |
@@ -245,9 +245,12 @@ miranda> 1 : [2] ++ [3]
 Result: [1,2,3]
 miranda> #[1,2,3] + 1
 Result: 4
+miranda> [0 <= x < 10 | x <- [-1, 5, 10]]
+Result: [False,True,False]
 ```
 
 Additional notes:
+- **Continued relations.** A run of comparisons such as `0 <= x < 10` or `a < b <= c` is a *continued relation*: it desugars to the short-circuit conjunction of its adjacent pairs — `0 <= x < 10` becomes `0 <= x & x < 10`, and `a < b <= c` becomes `(a < b) & (b <= c)`. Each operator may differ, the relations are checked left to right, and a failing one skips the rest. The interior operands appear textually in two relations, so keep them cheap (they are evaluated once per relation, not shared).
 - `!=` is accepted as an alias for `~=`.
 - The ordering operators `<`, `<=`, `>`, `>=` are **polymorphic and structural**, like `==`: the two operands must have the same type, and any of `num`, `char`, `bool` (with `False < True`), or lists and tuples built from them may be compared. Lists compare lexicographically (`[]` precedes any non-empty list) and tuples element-wise:
 ```miranda
@@ -1224,7 +1227,7 @@ Admiran and Miracula are sibling Miranda descendants, so a lot transfers directl
 | `case e of ...` | not supported — multi-equation definitions with patterns/guards |
 | block comments `{\| ... \|}` | lex error — only `\|\|` line comments |
 | `\x y -> e` (arrow, multi-var) | `\x. \y. e` (dot, one parameter per lambda; the parameter may be a tuple/cons pattern) |
-| chainable comparisons `a < b < c` | syntax error — write `a < b & b < c` |
+| chained comparisons `a < b < c` | supported as a *continued relation* — desugars to `(a < b) & (b < c)`, same as Miranda |
 | `x $div y`, `$fn` infix syntax | lex error — `/` *is* floor integer division, `mod` is an infix keyword |
 | `^` power | `x ^ y` integer exponentiation (a negative exponent is a runtime error); bitwise ops are the builtins `xor`/`band`/`bor`/`shl`/`shr` (section 22) |
 | `xs ! n`, `xs !! n` indexing | `xs ! n` (0-based; `vec_get (to_vec xs) n` for O(1) repeated access) |

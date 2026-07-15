@@ -186,6 +186,21 @@ func TestPowAndIndex(t *testing.T) {
 	}
 }
 
+// Continued relations `a < b < c` desugar to `(a < b) & (b < c)`, chaining
+// any mix of comparison operators and short-circuiting left to right.
+func TestContinuedRelations(t *testing.T) {
+	src := "main = [ (0 <= x < 10, 1 < x <= 5, 3 < x < x + 1, 1 <= x <= 3 <= 9) | x <- [0, 5, 10] ]\n"
+	want := "[(True,False,False,False),(True,True,True,False),(False,False,True,False)]"
+	if got := evalMain(t, src); got != want {
+		t.Errorf("continued relations: got %s", got)
+	}
+	// short-circuit: the second relation is never evaluated when the first
+	// fails, so a would-be error to its right is not reached
+	if got := evalMain(t, "main = 5 < 3 < (1 / 0)\n"); got != "False" {
+		t.Errorf("continued relation short-circuit: got %s", got)
+	}
+}
+
 // Miranda-style type signatures are accepted and discarded: plain,
 // multi-name, polymorphic, parenthesised-operator, and local (where) forms.
 func TestTypeDeclarations(t *testing.T) {

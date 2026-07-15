@@ -628,31 +628,42 @@ func (p *Parser) parsePP() ast.Node {
 	return p.mark(left, tok)
 }
 
+func isCompTok(t lexer.TokenType) bool {
+	switch t {
+	case lexer.TOK_EQ, lexer.TOK_NE, lexer.TOK_LT, lexer.TOK_GT, lexer.TOK_LE, lexer.TOK_GE:
+		return true
+	}
+	return false
+}
+
+// parseComp parses a comparison, which may be a continued relation:
+// `a < b <= c ...`. A single operator yields the plain relation; two or more
+// desugar to the short-circuit conjunction `(a < b) & (b <= c) & ...`, so an
+// interior operand takes part in the relation on either side of it — exactly
+// as `0 <= x < 10` reads as `0 <= x & x < 10`. The `&` nodes chain left, and
+// since `&` short-circuits, a failing relation stops the rest from running.
 func (p *Parser) parseComp() ast.Node {
 	tok := p.peek()
 	left := p.parseAddSub()
-	nextTok := p.peek()
-	switch nextTok.Type {
-	case lexer.TOK_EQ:
-		p.consume()
-		return p.mark(ast.EqNode{Left: left, Right: p.parseAddSub()}, tok)
-	case lexer.TOK_NE:
-		p.consume()
-		return p.mark(ast.NeNode{Left: left, Right: p.parseAddSub()}, tok)
-	case lexer.TOK_LT:
-		p.consume()
-		return p.mark(ast.LtNode{Left: left, Right: p.parseAddSub()}, tok)
-	case lexer.TOK_GT:
-		p.consume()
-		return p.mark(ast.GtNode{Left: left, Right: p.parseAddSub()}, tok)
-	case lexer.TOK_LE:
-		p.consume()
-		return p.mark(ast.LeNode{Left: left, Right: p.parseAddSub()}, tok)
-	case lexer.TOK_GE:
-		p.consume()
-		return p.mark(ast.GeNode{Left: left, Right: p.parseAddSub()}, tok)
+	if !isCompTok(p.peek().Type) {
+		return p.mark(left, tok)
 	}
-	return p.mark(left, tok)
+	prev := left
+	var chain ast.Node
+	for isCompTok(p.peek().Type) {
+		opTok := p.peek()
+		p.consume()
+		right := p.parseAddSub()
+		rel, _ := binopNode(opTok.Type, prev, right)
+		rel = p.mark(rel, opTok)
+		if chain == nil {
+			chain = rel
+		} else {
+			chain = p.mark(ast.IfNode{Cond: chain, Then: rel, Else: ast.BoolNode{Val: false}}, opTok)
+		}
+		prev = right
+	}
+	return chain
 }
 
 func (p *Parser) parseAddSub() ast.Node {
