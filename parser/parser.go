@@ -110,6 +110,45 @@ func (p *Parser) consume() {
 // patProjBindings turns a destructuring pattern LHS into the bindings that
 // project each variable out of `src`. The caller binds `src` (a fresh variable)
 // to the right-hand side once, so the RHS is evaluated a single time and shared.
+// binopNode builds the AST node for a binary operator token applied to left
+// and right, or ok=false if the token is not a sectionable binary operator.
+// `&` and `\/` desugar to short-circuit conditionals, matching the grammar.
+func binopNode(op lexer.TokenType, l, r ast.Node) (ast.Node, bool) {
+	switch op {
+	case lexer.TOK_ADD:
+		return ast.AddNode{Left: l, Right: r}, true
+	case lexer.TOK_MUL:
+		return ast.MulNode{Left: l, Right: r}, true
+	case lexer.TOK_DIV:
+		return ast.DivNode{Left: l, Right: r}, true
+	case lexer.TOK_MOD:
+		return ast.ModNode{Left: l, Right: r}, true
+	case lexer.TOK_EQ:
+		return ast.EqNode{Left: l, Right: r}, true
+	case lexer.TOK_NE:
+		return ast.NeNode{Left: l, Right: r}, true
+	case lexer.TOK_LT:
+		return ast.LtNode{Left: l, Right: r}, true
+	case lexer.TOK_GT:
+		return ast.GtNode{Left: l, Right: r}, true
+	case lexer.TOK_LE:
+		return ast.LeNode{Left: l, Right: r}, true
+	case lexer.TOK_GE:
+		return ast.GeNode{Left: l, Right: r}, true
+	case lexer.TOK_PP:
+		return ast.AppendNode{Left: l, Right: r}, true
+	case lexer.TOK_DIFF:
+		return ast.DiffNode{Left: l, Right: r}, true
+	case lexer.TOK_COLON:
+		return ast.ConsNode{Head: l, Tail: r}, true
+	case lexer.TOK_AND:
+		return ast.IfNode{Cond: l, Then: r, Else: ast.BoolNode{Val: false}}, true
+	case lexer.TOK_OR:
+		return ast.IfNode{Cond: l, Then: ast.BoolNode{Val: true}, Else: r}, true
+	}
+	return nil, false
+}
+
 // buildLetNode groups let/where raw bindings by name (multi-equation
 // functions), desugars each, and wraps the body in a LetNode (letrec).
 func buildLetNode(raws []RawBinding, body ast.Node) ast.Node {
@@ -359,16 +398,29 @@ func (p *Parser) parseExpr() ast.Node {
 	switch tok.Type {
 	case lexer.TOK_LAMBDA:
 		p.consume()
-		v := p.peek()
-		if v.Type != lexer.TOK_VAR {
-			p.errorf("expected variable after lambda '\\'")
+		if p.peek().Type == lexer.TOK_LPAREN {
+			// pattern lambda: \(a, b). e  /  \(x:xs). e — desugared like a
+			// one-equation function, so the pattern-match machinery (and its
+			// tuple-arity handling) is reused
+			pat := p.parsePattern()
+			if p.peek().Type != lexer.TOK_DOT {
+				p.errorf("expected '.' after lambda pattern")
+			}
+			p.consume()
+			body := p.parseExpr()
+			e = DesugarEquations([]RawBinding{{Pats: []ast.Pat{pat}, Body: body}})
+		} else {
+			v := p.peek()
+			if v.Type != lexer.TOK_VAR {
+				p.errorf("expected variable or pattern after lambda '\\'")
+			}
+			p.consume()
+			if p.peek().Type != lexer.TOK_DOT {
+				p.errorf("expected '.' after lambda variable")
+			}
+			p.consume()
+			e = ast.LamNode{Var: v.Str, Body: p.parseExpr()}
 		}
-		p.consume()
-		if p.peek().Type != lexer.TOK_DOT {
-			p.errorf("expected '.' after lambda variable")
-		}
-		p.consume()
-		e = ast.LamNode{Var: v.Str, Body: p.parseExpr()}
 	case lexer.TOK_IFZERO:
 		p.consume()
 		cond := p.parseExpr()
@@ -644,68 +696,15 @@ func (p *Parser) parseAtom() ast.Node {
 		p.consume()
 		res = p.parseListElements()
 	case lexer.TOK_LPAREN:
-		if p.peek2().Type == lexer.TOK_COLON {
+		if p.peek2().Type == lexer.TOK_SUB {
+			// (-) is two-argument subtraction; (- e) is unary minus (negation),
+			// not a section
 			if p.peek3().Type == lexer.TOK_RPAREN {
 				p.consume() // '('
-				p.consume() // ':'
+				p.consume() // '-'
 				p.consume() // ')'
-				res = ast.LamNode{
-					Var: "x",
-					Body: ast.LamNode{
-						Var:  "y",
-						Body: ast.ConsNode{Head: ast.VarNode{Name: "x"}, Tail: ast.VarNode{Name: "y"}},
-					},
-				}
-			} else {
-				p.consume() // '('
-				p.consume() // ':'
-				e := p.parseExpr()
-				if p.peek().Type != lexer.TOK_RPAREN {
-					p.errorf("expected ')'")
-				}
-				p.consume()
-				res = ast.LamNode{
-					Var:  "x",
-					Body: ast.ConsNode{Head: ast.VarNode{Name: "x"}, Tail: e},
-				}
-			}
-		} else if p.peek2().Type == lexer.TOK_ADD {
-			if p.peek3().Type == lexer.TOK_RPAREN {
-				p.consume()
-				p.consume()
-				p.consume()
-				res = ast.LamNode{
-					Var: "x",
-					Body: ast.LamNode{
-						Var:  "y",
-						Body: ast.AddNode{Left: ast.VarNode{Name: "x"}, Right: ast.VarNode{Name: "y"}},
-					},
-				}
-			} else {
-				p.consume()
-				p.consume()
-				e := p.parseExpr()
-				if p.peek().Type != lexer.TOK_RPAREN {
-					p.errorf("expected ')'")
-				}
-				p.consume()
-				res = ast.LamNode{
-					Var:  "x",
-					Body: ast.AddNode{Left: ast.VarNode{Name: "x"}, Right: e},
-				}
-			}
-		} else if p.peek2().Type == lexer.TOK_SUB {
-			if p.peek3().Type == lexer.TOK_RPAREN {
-				p.consume()
-				p.consume()
-				p.consume()
-				res = ast.LamNode{
-					Var: "x",
-					Body: ast.LamNode{
-						Var:  "y",
-						Body: ast.SubNode{Left: ast.VarNode{Name: "x"}, Right: ast.VarNode{Name: "y"}},
-					},
-				}
+				res = ast.LamNode{Var: "x", Body: ast.LamNode{Var: "y",
+					Body: ast.SubNode{Left: ast.VarNode{Name: "x"}, Right: ast.VarNode{Name: "y"}}}}
 			} else {
 				p.consume() // '('
 				p.consume() // '-'
@@ -715,6 +714,30 @@ func (p *Parser) parseAtom() ast.Node {
 				}
 				p.consume()
 				res = ast.SubNode{Left: ast.IntNode{Val: 0}, Right: e}
+			}
+		} else if _, isBin := binopNode(p.peek2().Type, nil, nil); isBin {
+			// operator sections: (op) is the two-argument operator, (op e) is a
+			// right section \x. x op e
+			op := p.peek2().Type
+			if p.peek3().Type == lexer.TOK_RPAREN {
+				p.consume() // '('
+				p.consume() // op
+				p.consume() // ')'
+				vx := newVarName("s")
+				vy := newVarName("s")
+				body, _ := binopNode(op, ast.VarNode{Name: vx}, ast.VarNode{Name: vy})
+				res = ast.LamNode{Var: vx, Body: ast.LamNode{Var: vy, Body: body}}
+			} else {
+				p.consume() // '('
+				p.consume() // op
+				e := p.parseExpr()
+				if p.peek().Type != lexer.TOK_RPAREN {
+					p.errorf("expected ')'")
+				}
+				p.consume()
+				vx := newVarName("s")
+				body, _ := binopNode(op, ast.VarNode{Name: vx}, e)
+				res = ast.LamNode{Var: vx, Body: body}
 			}
 		} else {
 			p.consume() // '('
@@ -828,7 +851,32 @@ func (p *Parser) parseListElements() ast.Node {
 		return ast.RangeNode{Start: head, End: tailExpr}
 	} else if tok.Type == lexer.TOK_COMMA {
 		p.consume()
-		return ast.ConsNode{Head: head, Tail: p.parseListElements()}
+		second := p.parseExpr()
+		if p.peek().Type == lexer.TOK_DOTDOT {
+			// stepped range [head, second .. end] / [head, second ..]
+			p.consume()
+			step := ast.SubNode{Left: second, Right: head}
+			if p.peek().Type == lexer.TOK_RBRACK {
+				p.consume()
+				return ast.RangeStepFromNode{Start: head, Step: step}
+			}
+			end := p.parseExpr()
+			if p.peek().Type != lexer.TOK_RBRACK {
+				p.errorf("expected ']' after stepped range")
+			}
+			p.consume()
+			return ast.RangeStepNode{Start: head, Step: step, End: end}
+		}
+		// ordinary list literal: head : second : rest
+		if p.peek().Type == lexer.TOK_COMMA {
+			p.consume()
+			return ast.ConsNode{Head: head, Tail: ast.ConsNode{Head: second, Tail: p.parseListElements()}}
+		} else if p.peek().Type == lexer.TOK_RBRACK {
+			p.consume()
+			return ast.ConsNode{Head: head, Tail: ast.ConsNode{Head: second, Tail: ast.NilNode{}}}
+		}
+		p.errorf("expected ',', '..', or ']' in list expression")
+		return nil
 	} else if tok.Type == lexer.TOK_RBRACK {
 		p.consume()
 		return ast.ConsNode{Head: head, Tail: ast.NilNode{}}

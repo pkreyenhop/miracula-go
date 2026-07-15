@@ -202,6 +202,14 @@ type RangeNode struct{ Start, End Node }
 // consecutive integers.
 type RangeFromNode struct{ Start Node }
 
+// RangeStepNode is a stepped range [start, second .. end]: an arithmetic
+// sequence with increment (second - start), inclusive of end in the step's
+// direction. Step is that increment (evaluated once, then carried as an int).
+type RangeStepNode struct{ Start, Step, End Node }
+
+// RangeStepFromNode is an unbounded stepped range [start, second ..].
+type RangeStepFromNode struct{ Start, Step Node }
+
 type ZFNode struct {
 	Body  Node
 	Quals []Qualifier
@@ -252,6 +260,8 @@ func (ZFNode) isNode()                 {}
 func (ZFGeneratorNode) isNode()        {}
 func (RangeNode) isNode()              {}
 func (RangeFromNode) isNode()          {}
+func (RangeStepNode) isNode()          {}
+func (RangeStepFromNode) isNode()      {}
 func (AddNode) isNode()                {}
 func (SubNode) isNode()                {}
 func (MulNode) isNode()                {}

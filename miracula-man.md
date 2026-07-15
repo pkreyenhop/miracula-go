@@ -168,6 +168,14 @@ Result: [3,2,1]
 ```
 (Note the dot: Haskell-style `\x -> e` is not accepted.)
 
+A lambda's parameter may be a **tuple or cons pattern**, destructured on entry:
+```miranda
+miranda> map (\(a, b). a + b) [(1,2),(3,4)]
+Result: [3,7]
+miranda> sort_by (\(k1, v1). \(k2, v2). k1 - k2) [(3,"c"),(1,"a")]
+Result: [(1,"a"),(3,"c")]
+```
+
 ## The pipe operator
 `x |> f` applies `f` to `x`. It is left-associative and binds loosest of all operators, so data flows left to right through a chain — often more readable than nested application:
 ```miranda
@@ -260,23 +268,21 @@ Inside string literals and `||` comments any character is of course fine.
 
 # 8. Operator sections
 
-A few operators can be used as functions or partially applied. Miracula supports exactly these section forms (all verified):
+A binary operator can be used as a function or partially applied by parenthesising it. Two forms are supported for every binary operator:
 
-| Section | Meaning | Example |
-| --- | --- | --- |
-| `(+)` | two-argument addition | `foldl (+) 0 xs` |
-| `(+e)` | add `e` to the argument | `map (+2) [1..3]` → `[3,4,5]` |
-| `(:)` | two-argument cons | `(:) 0 [1]` → `[0,1]` |
-| `(:e)` | cons the argument onto `e` | `(: [2,3]) 1` → `[1,2,3]` |
-| `(-)` | two-argument subtraction | `(-) 5 3` → `2` |
+- **`(op)`** — the bare two-argument operator, e.g. `foldl (+) 0 xs`, `sort_by (-) …`, `(:) 0 [1]` → `[0,1]`.
+- **`(op e)`** — a *right section* `\x. x op e`, e.g. `map (* 2) [1..3]` → `[2,4,6]`, `filter (> 3) xs`, `map (mod 2) xs`, `(: [2,3]) 1` → `[1,2,3]`.
 
-`(- e)` is **not** a section — parenthesised `-` followed by an expression is unary minus, so `(-2)` is the number −2.
+The operators that section are `+ * / mod == ~= < > <= >= ++ -- : & \/`.
 
-Other operators (`*`, `/`, `==`, `++`, …) have no section form; use a lambda or `converse` instead:
 ```miranda
-miranda> map (\x. x * 3) [1..3]
-Result: [3,6,9]
+miranda> (map (* 2) [1,2,3], filter (> 3) [1,2,3,4,5], foldl (*) 1 [1..4])
+Result: ([2,4,6],[4,5],24)
 ```
+
+Two caveats:
+- `-` is special: `(-)` is two-argument subtraction, but `(- e)` is **unary minus** (so `(-2)` is the number −2), not a section. For "subtract from", write a lambda: `\x. 10 - x`.
+- Only *right* sections `(op e)` exist; there is no *left* section `(e op)`. Since `+`, `*` etc. are commutative that rarely matters; otherwise use a lambda (`\x. e op x`).
 
 ---
 
@@ -296,6 +302,7 @@ The following identifiers are predefined in the Miracula stdenv and always in sc
 - **Constructors**: `True`, `False`
 - **Built-in Functions** (implemented natively in Go; see sections 21 and 22):
   - core: `hd`, `tl`, `show`, `read`, `lines`, `numval`, `length`, `reverse`, `seq`
+  - characters: `ord` (char → code), `chr` (code → char)
   - string processing: `split`, `parse_ints`
   - maps and sets: `empty_map`, `h_insert`, `h_lookup`, `h_lookup_def`, `empty_set`, `member`
   - vectors: `to_vec`, `vec_get`, `vec_set`, `vec_len`, `vec_to_list`
@@ -366,7 +373,11 @@ Result: 3
 # 12. Iterative expressions
 
 Miracula supports list generator expressions:
-1. **List Ranges**: The dotdot notation generates sequence lists lazily. `[1..100]` is the finite range; `[1..]` (no upper bound) is an infinite lazy list of consecutive integers — safe to build and process as long as only a finite prefix is demanded. There is no step form `[1,3..9]`; use a comprehension or `iterate` for other strides.
+1. **List Ranges**: The dotdot notation generates sequence lists lazily. `[1..100]` is the finite range; `[1..]` (no upper bound) is an infinite lazy list of consecutive integers — safe to build and process as long as only a finite prefix is demanded. A **stepped** range `[a, b .. c]` gives the arithmetic sequence with increment `b - a`, and `[a, b ..]` is its infinite form:
+```miranda
+miranda> ([1, 3 .. 9], [10, 8 .. 0], take 4 [0, 5 ..])
+Result: ([1,3,5,7,9],[10,8,6,4,2,0],[0,5,10,15])
+```
 ```miranda
 miranda> hd [1..]
 Result: 1
@@ -661,7 +672,7 @@ expressible in Miracula:
 - **non-empty folds**: `foldl1`, `foldr1`
 - **ordering** (structural, section 7): `max2`, `min2`, `max`, `min`, `merge`, `sort`, `mkset`
 - **character predicates**: `digit`, `letter`
-- **more list processing**: `dropwhile`, `index`, `init`, `last`, `limit`, `until`, `scan`, `map2`, `transpose`
+- **more list processing**: `dropwhile`, `index`, `init`, `last`, `limit`, `until`, `scan`, `map2`, `zipWith`, `zip2`, `transpose`
 - **text formatting**: `rep`, `spaces`, `ljustify`, `rjustify`, `cjustify`, `lay`, `layn`
 - **wider zips**: `zip3`, `zip4`, `zip5`, `zip6`
 
@@ -1105,7 +1116,6 @@ If you already know Miranda, Miracula will feel immediately familiar: lazy evalu
 | `%include`, `%export`, literate scripts | no module system; one script + `stdenv.m` |
 | order-independent definitions | **checked top-to-bottom**: a definition may not reference one defined later in the file, so mutual recursion across top-level definitions is rejected |
 | guard fall-through to the next equation | **failing all guards is a runtime error** (`Pattern matching exhausted`) — always end with `otherwise` |
-| step ranges `[1,3..9]` = `[1,3,5,7,9]` | **pitfall**: `[1,3..9]` parses as `1 : [3..9]` = `[1,3,4,5,6,7,8,9]` — use a comprehension like `[x | x <- [1..9]; x mod 2 ~= 0]` |
 | continued relations `0 <= x < 10` | syntax error — write `0 <= x & x < 10` |
 | n+k patterns `f (n+1) = ...` | parse error — match on `n` and use `n - 1` |
 | repeated pattern variables `(x, x)` match only equal parts | accepted but **no equality check** — the leftmost binding silently wins |
@@ -1114,7 +1124,7 @@ If you already know Miranda, Miracula will feel immediately familiar: lazy evalu
 | `show` restricted to monomorphic contexts in scripts | no restriction — `show` is fully polymorphic everywhere |
 | list patterns `[a, b]` | parse error — write `(a:b:[])` |
 | tuple bindings in where: `(a, b) = e` | parse error — use a pattern-matching helper: `first (a, b) = a` |
-| general sections `(1+)`, `(*2)`, `(2/)` | only `(+)`, `(+e)`, `(:)`, `(:e)`, `(-)` — use lambdas otherwise (section 8) |
+| left sections `(1+)`, `(2/)` | only *right* sections `(op e)` and bare `(op)` (section 8) — for a left section write a lambda |
 | `$fn` user-defined infix | not supported |
 | `error`, `undef` | not available |
 | curried `zip2 xs ys` | `zip` takes a *tuple* of lists: `zip (xs, ys)` |
@@ -1169,17 +1179,18 @@ Result: True
 | `x `div` y` (backticks) | `x / y` (`/` *is* floor integer division; backticks are a lex error) |
 | `xs !! n` | `vec_get (to_vec xs) n` |
 | `[x \| x <- xs, p x]` | `[x \| x <- xs; p x]` (semicolons between qualifiers) |
-| `zip xs ys` | `zip (xs, ys)` (one tuple argument) |
+| `zip xs ys` | `zip (xs, ys)` (one tuple argument), or the curried `zip2 xs ys` / `zipWith f xs ys` |
 | `f $ g x` | parens, or flip the flow: `x \|> g \|> f` (`$` is a lex error) |
 | `Data.Function.&` | `\|>` (and note `&` here means AND) |
 | `f :: a -> b` | not supported — inference only, no annotations |
 | `data` / `newtype` / `type` / classes | not supported — tuples and tags |
 | `import` / modules / `do` / `IO` | none: one script; `main` is a value that gets printed; `read "file"` returns the file contents as a string |
 | `Integer` (bignum), `Double` | only `num` = 64-bit signed integer; overflow wraps |
-| `[1,3..9]` | **pitfall**: parses as `1 : [3..9]` = `[1,3,4,5,6,7,8,9]`, not `[1,3,5,7,9]` |
+| `[1,3..9]` | `[1, 3 .. 9]` = `[1,3,5,7,9]` (stepped range; needs the comma) |
 | `[a, b]` as a *pattern* | `(a:b:[])` |
-| `x@(y:ys)`, `~pat`, records | not supported |
-| general sections `(2*)`, `(subtract 2)` | only `(+)`, `(+e)`, `(:)`, `(:e)`, `(-)` — lambdas otherwise |
+| `x@(y:ys)`, `~pat`, records | not supported (but `\(a,b). e` pattern lambdas work) |
+| left sections `(2*)`, `(subtract 2)` | right sections `(op e)` and bare `(op)` are supported; write a lambda for a left section |
+| `chr` / `ord` | same names: `chr :: num -> char`, `ord :: char -> num` |
 | `Data.Map` / `Data.Set` / arrays | native `h_insert`/`h_lookup`, `s_insert`/`member`, `to_vec`/`vec_get` (section 22) |
 
 ## Semantics worth knowing
@@ -1204,11 +1215,10 @@ Admiran and Miracula are sibling Miranda descendants, so a lot transfers directl
 | algebraic types `t * ::= C1 \| C2 ...`, strict fields, `abstype`, `==` synonyms | not supported — tuples and tags |
 | `case e of ...` | not supported — multi-equation definitions with patterns/guards |
 | block comments `{\| ... \|}` | lex error — only `\|\|` line comments |
-| `\x y -> e` (patterns, arrow) | `\x. \y. e` (dot, one variable per lambda) |
+| `\x y -> e` (arrow, multi-var) | `\x. \y. e` (dot, one parameter per lambda; the parameter may be a tuple/cons pattern) |
 | chainable comparisons `a < b < c` | syntax error — write `a < b & b < c` |
-| step ranges `[1,3..9]` | **pitfall**: parses as `1 : [3..9]` = `[1,3,4,5,6,7,8,9]` |
 | `x $div y`, `$fn` infix syntax | lex error — `/` *is* floor integer division, `mod` is an infix keyword |
-| `^` power, bitwise operators | lex/parse errors — none built in |
+| `^` power | parse error — none built in; bitwise ops are the builtins `xor`/`band`/`bor`/`shl`/`shr` (section 22) |
 | `xs ! n`, `xs !! n` indexing | `vec_get (to_vec xs) n` |
 | hex/octal/binary literals `0xff` | **pitfall**: `0xff` lexes as `0` applied to a variable `xff` ("unbound variable: xff") — decimal only |
 | unboxed `42#` values | no unboxed values (`#` is prefix length) |

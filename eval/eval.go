@@ -861,7 +861,7 @@ machine:
 		case ast.VarNode:
 			name := node.Name
 			switch name {
-			case "hd", "tl", "show", "read", "lines", "numval", "length", "reverse", "seq", "h_lookup", "h_insert", "member", "split", "parse_ints", "list_get", "list_set", "memoize", "sort_by", "sort_ints", "sort_edges", "sort_pts", "h_lookup_def", "s_insert", "to_vec", "vec_get", "vec_set", "vec_len", "vec_to_list", "xor", "band", "bor", "shl", "shr", "memofix", "pq_push", "pq_pop", "pq_null":
+			case "hd", "tl", "show", "read", "lines", "numval", "length", "reverse", "seq", "h_lookup", "h_insert", "member", "split", "parse_ints", "list_get", "list_set", "memoize", "sort_by", "sort_ints", "sort_edges", "sort_pts", "h_lookup_def", "s_insert", "to_vec", "vec_get", "vec_set", "vec_len", "vec_to_list", "xor", "band", "bor", "shl", "shr", "memofix", "pq_push", "pq_pop", "pq_null", "ord", "chr":
 				v = node
 			case "empty_map":
 				v = ast.MapNode{Tree: nil}
@@ -1039,6 +1039,27 @@ machine:
 			v = ast.ConsNode{Head: v1, Tail: ast.ThunkNode{Cell: &ast.ThunkCell{
 				State: ast.Unevaluated,
 				Expr:  ast.RangeFromNode{Start: ast.IntNode{Val: i1.Val + 1}},
+				Env:   env,
+			}}}
+		case ast.RangeStepNode:
+			s := Whnf(env, node.Start).(ast.IntNode)
+			st := Whnf(env, node.Step).(ast.IntNode)
+			e := Whnf(env, node.End).(ast.IntNode)
+			if (st.Val >= 0 && s.Val > e.Val) || (st.Val < 0 && s.Val < e.Val) {
+				v = ast.NilNode{}
+				break
+			}
+			v = ast.ConsNode{Head: s, Tail: ast.ThunkNode{Cell: &ast.ThunkCell{
+				State: ast.Unevaluated,
+				Expr:  ast.RangeStepNode{Start: ast.IntNode{Val: s.Val + st.Val}, Step: st, End: e},
+				Env:   env,
+			}}}
+		case ast.RangeStepFromNode:
+			s := Whnf(env, node.Start).(ast.IntNode)
+			st := Whnf(env, node.Step).(ast.IntNode)
+			v = ast.ConsNode{Head: s, Tail: ast.ThunkNode{Cell: &ast.ThunkCell{
+				State: ast.Unevaluated,
+				Expr:  ast.RangeStepFromNode{Start: ast.IntNode{Val: s.Val + st.Val}, Step: st},
 				Env:   env,
 			}}}
 		case ast.ProjNode:
@@ -1885,6 +1906,20 @@ func applyBuiltin(env *ast.Env, name string, node ast.AppNode) ast.Node {
 			panic(ast.RuntimeError{Msg: "pq_null: expected a priority queue"})
 		}
 		return ast.BoolNode{Val: pq.Heap == nil}
+	case "ord":
+		c := Whnf(env, node.Right)
+		ch, ok := c.(ast.CharNode)
+		if !ok {
+			panic(ast.RuntimeError{Msg: "ord: expected a character"})
+		}
+		return ast.IntNode{Val: int64(ch.Val)}
+	case "chr":
+		n := Whnf(env, node.Right)
+		i, ok := n.(ast.IntNode)
+		if !ok {
+			panic(ast.RuntimeError{Msg: "chr: expected an integer"})
+		}
+		return ast.CharNode{Val: rune(i.Val)}
 	case "sort_ints":
 		listVal := Whnf(env, node.Right)
 		var elems []int64

@@ -18,7 +18,12 @@ func evalMain(t *testing.T, src string) string {
 	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
 		t.Fatalf("write script: %v", err)
 	}
-	env, _, err := LoadScriptFile(path, ast.NewEnv(), typecheck.DefaultTypeEnv())
+	// load stdenv (go test runs in the package dir; stdenv.m is one level up)
+	env, typeEnv, err := LoadScriptFile("../stdenv.m", ast.NewEnv(), typecheck.DefaultTypeEnv())
+	if err != nil {
+		t.Fatalf("load stdenv: %v", err)
+	}
+	env, _, err = LoadScriptFile(path, env, typeEnv)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -134,5 +139,40 @@ main = drain (pq_push (pq_push (pq_push pq_empty 3 30) 1 10) 2 20)
 `
 	if got := evalMain(t, src); got != "[(1,10),(2,20),(3,30)]" {
 		t.Errorf("priority queue: got %s", got)
+	}
+}
+
+func TestOrdChr(t *testing.T) {
+	src := "main = (ord 'a', chr 98, [ord c - ord '0' | c <- \"123\"])\n"
+	if got := evalMain(t, src); got != "(97,'b',[1,2,3])" {
+		t.Errorf("ord/chr: got %s", got)
+	}
+}
+
+func TestZipWith(t *testing.T) {
+	src := "main = (zipWith (\\a. \\b. a + b) [1,2,3] [10,20,30], zip2 [1,2] \"ab\")\n"
+	if got := evalMain(t, src); got != "([11,22,33],[(1,'a'),(2,'b')])" {
+		t.Errorf("zipWith/zip2: got %s", got)
+	}
+}
+
+func TestStepRanges(t *testing.T) {
+	src := "main = ([1,3..9], [10,8..0], take 4 [0,5..])\n"
+	if got := evalMain(t, src); got != "([1,3,5,7,9],[10,8,6,4,2,0],[0,5,10,15])" {
+		t.Errorf("step ranges: got %s", got)
+	}
+}
+
+func TestLambdaPatterns(t *testing.T) {
+	src := "main = (map (\\(a, b). a + b) [(1,2),(3,4)], (\\(x:xs). x) [7,8,9])\n"
+	if got := evalMain(t, src); got != "([3,7],7)" {
+		t.Errorf("lambda patterns: got %s", got)
+	}
+}
+
+func TestOperatorSections(t *testing.T) {
+	src := "main = (map (* 2) [1,2,3], filter (> 3) [1,2,3,4,5], foldl (*) 1 [1,2,3,4], map (mod 2) [10,11])\n"
+	if got := evalMain(t, src); got != "([2,4,6],[4,5],24,[0,1])" {
+		t.Errorf("operator sections: got %s", got)
 	}
 }

@@ -149,6 +149,11 @@ scan op r (a:x) = r : scan op (op r a) x
 
 || --- two-list map and transpose -------------------------------------------
 map2 f x y = [f a b | (a, b) <- zip (x, y)]
+|| zipWith is the curried Bird-and-Wadler form of map2; zip2 is a curried zip
+zipWith f (x:xs) (y:ys) = f x y : zipWith f xs ys
+zipWith f xs ys = []
+zip2 xs ys = zipWith pair xs ys
+             where pair a b = (a, b)
 transpose x = [], if xp == []
             = map hd xp : transpose (map tl xp), otherwise
               where

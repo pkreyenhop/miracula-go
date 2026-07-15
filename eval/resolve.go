@@ -18,6 +18,7 @@ var resolverBuiltins = map[string]bool{
 	"xor":        true, "band": true, "bor": true, "shl": true, "shr": true,
 	"memofix":  true,
 	"pq_empty": true, "pq_push": true, "pq_pop": true, "pq_null": true,
+	"ord":      true, "chr": true,
 }
 
 // Resolve rewrites variable references in a freshly desugared definition or
@@ -148,6 +149,10 @@ func resolveNode(n ast.Node, scope []string) ast.Node {
 		return ast.RangeNode{Start: resolveNode(node.Start, scope), End: resolveNode(node.End, scope)}
 	case ast.RangeFromNode:
 		return ast.RangeFromNode{Start: resolveNode(node.Start, scope)}
+	case ast.RangeStepNode:
+		return ast.RangeStepNode{Start: resolveNode(node.Start, scope), Step: resolveNode(node.Step, scope), End: resolveNode(node.End, scope)}
+	case ast.RangeStepFromNode:
+		return ast.RangeStepFromNode{Start: resolveNode(node.Start, scope), Step: resolveNode(node.Step, scope)}
 	case ast.AddNode:
 		return ast.AddNode{Left: resolveNode(node.Left, scope), Right: resolveNode(node.Right, scope)}
 	case ast.SubNode:

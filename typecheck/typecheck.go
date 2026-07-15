@@ -836,6 +836,34 @@ func (tc *TypeChecker) inferInternal(env *TypeEnv, node ast.Node, sub Substituti
 		}
 		return ListType{Elem: TInt}, sub2, nil
 
+	case ast.RangeStepNode:
+		s := sub
+		for _, e := range []ast.Node{n.Start, n.Step, n.End} {
+			tE, s1, err := tc.Infer(env, e, s)
+			if err != nil {
+				return nil, nil, err
+			}
+			s, err = s1.Unify(tE, TInt)
+			if err != nil {
+				return nil, nil, fmt.Errorf("stepped range bounds must be Int: %w", err)
+			}
+		}
+		return ListType{Elem: TInt}, s, nil
+
+	case ast.RangeStepFromNode:
+		s := sub
+		for _, e := range []ast.Node{n.Start, n.Step} {
+			tE, s1, err := tc.Infer(env, e, s)
+			if err != nil {
+				return nil, nil, err
+			}
+			s, err = s1.Unify(tE, TInt)
+			if err != nil {
+				return nil, nil, fmt.Errorf("stepped range bounds must be Int: %w", err)
+			}
+		}
+		return ListType{Elem: TInt}, s, nil
+
 	case ast.ZFNode:
 		envCurr := env
 		sCurr := sub
@@ -999,6 +1027,8 @@ func DefaultTypeEnv() *TypeEnv {
 
 	// bitwise operators on integers: num -> num -> num
 	numNumNum := FunType{From: TInt, To: FunType{From: TInt, To: TInt}}
+	env.Map["ord"] = Scheme{Vars: nil, Ty: FunType{From: TChar, To: TInt}}
+	env.Map["chr"] = Scheme{Vars: nil, Ty: FunType{From: TInt, To: TChar}}
 	env.Map["xor"] = Scheme{Vars: nil, Ty: numNumNum}
 	env.Map["band"] = Scheme{Vars: nil, Ty: numNumNum}
 	env.Map["bor"] = Scheme{Vars: nil, Ty: numNumNum}
