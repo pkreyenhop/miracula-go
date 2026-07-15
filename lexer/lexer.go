@@ -57,6 +57,7 @@ const (
 	TOK_IN
 	TOK_CARET
 	TOK_BANG
+	TOK_DCOLON
 	// TOK_ERROR marks a character the lexer does not recognise; the parser
 	// rejects it with a positioned parse error instead of skipping it.
 	TOK_ERROR
@@ -233,8 +234,15 @@ func TokenizeWithPos(str string, line int) []Token {
 			continue
 		}
 		if c == ':' {
-			addTok(Token{Type: TOK_COLON})
-			i++
+			if i+1 < size && runes[i+1] == ':' {
+				// `::` introduces a Miranda-style type signature, which the
+				// parser accepts and discards (types are inferred).
+				addTok(Token{Type: TOK_DCOLON})
+				i += 2
+			} else {
+				addTok(Token{Type: TOK_COLON})
+				i++
+			}
 			continue
 		}
 		if c == '#' {
@@ -625,6 +633,8 @@ func TokenToString(t Token) string {
 		return ","
 	case TOK_COLON:
 		return ":"
+	case TOK_DCOLON:
+		return "::"
 	case TOK_SUB:
 		return "-"
 	case TOK_ADD:

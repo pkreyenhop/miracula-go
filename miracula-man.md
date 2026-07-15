@@ -568,7 +568,7 @@ Internally, multi-equation pattern definitions are desugared into a decision tre
 
 # 16. Basic type structure
 
-Miracula is statically typed: every definition and REPL expression is checked by Hindley–Milner type inference before it is evaluated, so type errors are reported at load time with the offending source position. There are no type declarations — types are inferred.
+Miracula is statically typed: every definition and REPL expression is checked by Hindley–Milner type inference before it is evaluated, so type errors are reported at load time with the offending source position. Types are always inferred, never required. A Miranda-style signature such as `f :: num -> num` (including multi-name `f, g :: t`, parenthesised-operator `(+) :: t`, and local `where`-clause forms) is *accepted and then discarded* — it is neither checked against the inferred type nor used to constrain it. Signatures are therefore documentation that the parser tolerates, nothing more.
 
 The type formers are:
 
@@ -712,11 +712,13 @@ is clearer than the two-level recursion needed to write it by hand. `map`, `filt
 
 **Order definitions bottom-up.** Since scripts are checked top-to-bottom (section 13), helpers must precede their users; put the small building blocks first and `main` last, and the file reads as a narrative from pieces to whole.
 
-**Document intended types in comments.** There are no type declarations, and inference will happily give a wrong-but-consistent program a surprising type. For any non-obvious top-level function, a one-line comment such as
+**Document intended types.** Inference will happily give a wrong-but-consistent program a surprising type, so recording the intended type is worthwhile. A Miranda-style signature is accepted but ignored — it is *not* checked against inference — so for any non-obvious top-level function write either a signature or a comment:
 ```miranda
+dist :: (num,num,num) -> (num,num,num) -> num
+|| or, equivalently, as a comment:
 || dist :: (num,num,num) -> (num,num,num) -> num
 ```
-costs nothing and pins down intent where the compiler cannot.
+Either costs nothing and pins down intent. Because the signature is not enforced, a comment is just as reliable; use whichever reads better.
 
 **Force long accumulators.** The standard `foldl` is already strict, but hand-written accumulating loops should force their accumulator with `seq` each step — an unforced accumulator builds a chain of suspended additions across millions of iterations.
 
@@ -1118,7 +1120,7 @@ If you already know Miranda, Miracula will feel immediately familiar: lazy evalu
 | floats; arbitrary-precision integers | `num` is a 64-bit signed integer only; overflow wraps silently |
 | `x div y` and float `/` | `/` *is* integer division (floor); there is no `div` |
 | `x ^ y` (float power), `x ^^ y`, `**` | `^` is integer exponentiation (negative exponent is a runtime error); there is no float power |
-| type declarations `f :: num -> num` | parse error — types are inferred only (Hindley–Milner, section 16) |
+| type declarations `f :: num -> num` | accepted but *ignored* — parsed and discarded, never checked; types are inferred (Hindley–Milner, section 16) |
 | algebraic types `tree ::= Leaf \| Node ...` | not supported; model variants with tuples/tags |
 | type synonyms `string == [char]`, `abstype` | not supported |
 | `%include`, `%export`, literate scripts | no module system; one script + `stdenv.m` |
@@ -1187,7 +1189,7 @@ Result: True
 | `zip xs ys` | `zip (xs, ys)` (one tuple argument), or the curried `zip2 xs ys` / `zipWith f xs ys` |
 | `f $ g x` | parens, or flip the flow: `x \|> g \|> f` (`$` is a lex error) |
 | `Data.Function.&` | `\|>` (and note `&` here means AND) |
-| `f :: a -> b` | not supported — inference only, no annotations |
+| `f :: a -> b` | same syntax, but *ignored* — accepted then discarded, never checked; inference does the real work |
 | `data` / `newtype` / `type` / classes | not supported — tuples and tags |
 | `import` / modules / `do` / `IO` | none: one script; `main` is a value that gets printed; `read "file"` returns the file contents as a string |
 | `Integer` (bignum), `Double` | only `num` = 64-bit signed integer; overflow wraps |
@@ -1217,7 +1219,7 @@ Admiran and Miracula are sibling Miranda descendants, so a lot transfers directl
 | Admiran | In Miracula |
 | --- | --- |
 | `%import` / `%export`, qualified modules | no module system — one script plus `stdenv.m` |
-| type declarations `f :: type` | parse error — types are inferred only |
+| type declarations `f :: type` | accepted but *ignored* — parsed and discarded, never checked; types are inferred |
 | algebraic types `t * ::= C1 \| C2 ...`, strict fields, `abstype`, `==` synonyms | not supported — tuples and tags |
 | `case e of ...` | not supported — multi-equation definitions with patterns/guards |
 | block comments `{\| ... \|}` | lex error — only `\|\|` line comments |

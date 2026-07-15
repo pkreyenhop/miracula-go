@@ -36,8 +36,15 @@ type REPLEvalStmt struct {
 	Expr ast.Node
 }
 
+// TypeDeclStmt is a Miranda-style type signature (`f :: num -> num`). It is
+// parsed and then discarded: Miracula infers types (Hindley–Milner), so the
+// declaration carries no information the checker needs. Accepting it lets
+// Miranda/Haskell source that annotates its definitions load unchanged.
+type TypeDeclStmt struct{}
+
 func (ScriptBindStmt) isStmt() {}
 func (REPLEvalStmt) isStmt()   {}
+func (TypeDeclStmt) isStmt()   {}
 
 type ParseError struct {
 	Msg string
@@ -189,6 +196,41 @@ func patProjBindings(pat ast.Pat, src ast.Node) []RawBinding {
 	return nil
 }
 
+// isTypeDecl reports whether the token stream begins with a Miranda-style
+// type signature — a `::` at bracket-depth 0 reached before any `=`, `;`, or
+// closing `}` at that depth. It covers plain (`f :: t`), multi-name
+// (`f, g :: t`), and parenthesised-operator (`(+) :: t`) signatures. The
+// caller discards the signature; types are inferred, not declared.
+func isTypeDecl(tokens []lexer.Token) bool {
+	depth := 0
+	for i, t := range tokens {
+		switch t.Type {
+		case lexer.TOK_LBRACE, lexer.TOK_LPAREN, lexer.TOK_LBRACK:
+			depth++
+		case lexer.TOK_RBRACE, lexer.TOK_RPAREN, lexer.TOK_RBRACK:
+			if depth == 0 {
+				return false
+			}
+			depth--
+		case lexer.TOK_DCOLON:
+			if depth == 0 {
+				// `::=` is a Miranda algebraic-type definition, a different and
+				// unsupported construct — leave it to fail with a parse error
+				// rather than silently swallowing it as a signature.
+				if i+1 < len(tokens) && tokens[i+1].Type == lexer.TOK_ASSIGN {
+					return false
+				}
+				return true
+			}
+		case lexer.TOK_ASSIGN, lexer.TOK_SEMICOLON:
+			if depth == 0 {
+				return false
+			}
+		}
+	}
+	return false
+}
+
 func isAssignment(tokens []lexer.Token) bool {
 	depth := 0
 	for _, t := range tokens {
@@ -293,6 +335,24 @@ func (p *Parser) parseRHS() ast.Node {
 				p.consume()
 				return nil
 			}
+			if isTypeDecl(p.tokens[p.pos:]) {
+				// A local Miranda-style type signature: discard its tokens up
+				// to the binding separator, then carry on with the real
+				// bindings that follow.
+				for p.peek().Type != lexer.TOK_SEMICOLON &&
+					p.peek().Type != lexer.TOK_RBRACE &&
+					p.peek().Type != lexer.TOK_EOF {
+					p.consume()
+				}
+				if p.peek().Type == lexer.TOK_SEMICOLON {
+					p.consume()
+					return parseBindings()
+				}
+				if p.peek().Type == lexer.TOK_RBRACE {
+					p.consume()
+				}
+				return nil
+			}
 			if isAssignment(p.tokens[p.pos:]) {
 				var bs []RawBinding
 				if p.peek().Type == lexer.TOK_LPAREN {
@@ -371,6 +431,15 @@ func (p *Parser) checkLexErrors() {
 
 func (p *Parser) Parse() Stmt {
 	p.checkLexErrors()
+	if isTypeDecl(p.tokens[p.pos:]) {
+		// Accept and discard a Miranda-style type signature. Its tokens have
+		// already lexed cleanly (checkLexErrors above), so nothing needs to be
+		// parsed — the whole segment is consumed and ignored.
+		for p.peek().Type != lexer.TOK_EOF {
+			p.consume()
+		}
+		return TypeDeclStmt{}
+	}
 	if isAssignment(p.tokens[p.pos:]) {
 		tok := p.peek()
 		if tok.Type != lexer.TOK_VAR {

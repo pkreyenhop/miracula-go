@@ -186,6 +186,31 @@ func TestPowAndIndex(t *testing.T) {
 	}
 }
 
+// Miranda-style type signatures are accepted and discarded: plain,
+// multi-name, polymorphic, parenthesised-operator, and local (where) forms.
+func TestTypeDeclarations(t *testing.T) {
+	src := `
+double :: num -> num
+double x = x * 2
+inc, dec :: num -> num
+inc x = x + 1
+dec x = x - 1
+first :: (*, **) -> *
+first (a, b) = a
+(plus) :: num -> num -> num
+plus a b = a + b
+label :: [char] -> [char]
+label s = tag ++ s
+          where
+          tag :: [char]
+          tag = "> "
+main = (double 21, inc 9, dec 9, first (7, 'x'), plus 3 4, label "hi")
+`
+	if got := evalMain(t, src); got != `(42,10,8,7,7,"> hi")` {
+		t.Errorf("type declarations: got %s", got)
+	}
+}
+
 func TestListPatterns(t *testing.T) {
 	src := `
 describe []        = "empty"

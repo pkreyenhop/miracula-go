@@ -465,9 +465,12 @@ func LoadScriptFile(filename string, env *ast.Env, typeEnv *typecheck.TypeEnv) (
 			}()
 			p := parser.NewParser(seg).WithFilename(filename)
 			stmt := p.Parse()
-			if bind, ok := stmt.(parser.ScriptBindStmt); ok {
-				bindings = append(bindings, bind.Binding)
-			} else {
+			switch s := stmt.(type) {
+			case parser.ScriptBindStmt:
+				bindings = append(bindings, s.Binding)
+			case parser.TypeDeclStmt:
+				// type signatures are accepted but carry no runtime meaning
+			default:
 				panic("invalid expression structure in script file")
 			}
 			return nil
@@ -824,6 +827,8 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 				case parser.ScriptBindStmt:
 					bindings = append(bindings, s.Binding)
 					isMultiBind = true
+				case parser.TypeDeclStmt:
+					// accepted and ignored — types are inferred, not declared
 				case parser.REPLEvalStmt:
 					if isMultiBind {
 						panic(ast.RuntimeError{Msg: "Cannot mix binding statements and evaluation expressions"})
@@ -926,7 +931,7 @@ func RunREPLDirect(env *ast.Env, typeEnv *typecheck.TypeEnv, scriptFile string) 
 						}
 					}
 				}
-			} else {
+			} else if evalStmt.Expr != nil {
 				tc := typecheck.NewTypeChecker()
 				_, _, err := tc.Infer(typeEnv, evalStmt.Expr, nil)
 				if err != nil {
