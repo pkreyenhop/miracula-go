@@ -163,6 +163,10 @@ func resolveNode(n ast.Node, scope []string) ast.Node {
 		return ast.DivNode{Left: resolveNode(node.Left, scope), Right: resolveNode(node.Right, scope)}
 	case ast.ModNode:
 		return ast.ModNode{Left: resolveNode(node.Left, scope), Right: resolveNode(node.Right, scope)}
+	case ast.PowNode:
+		return ast.PowNode{Left: resolveNode(node.Left, scope), Right: resolveNode(node.Right, scope)}
+	case ast.IndexNode:
+		return ast.IndexNode{List: resolveNode(node.List, scope), Index: resolveNode(node.Index, scope)}
 	case ast.EqNode:
 		return ast.EqNode{Left: resolveNode(node.Left, scope), Right: resolveNode(node.Right, scope)}
 	case ast.NeNode:

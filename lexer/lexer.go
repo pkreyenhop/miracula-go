@@ -55,6 +55,8 @@ const (
 	TOK_PIPEGT
 	TOK_LET
 	TOK_IN
+	TOK_CARET
+	TOK_BANG
 	// TOK_ERROR marks a character the lexer does not recognise; the parser
 	// rejects it with a positioned parse error instead of skipping it.
 	TOK_ERROR
@@ -195,9 +197,14 @@ func TokenizeWithPos(str string, line int) []Token {
 				addTok(Token{Type: TOK_NE})
 				i += 2
 			} else {
-				addTok(Token{Type: TOK_ERROR, Str: "!"})
+				addTok(Token{Type: TOK_BANG})
 				i++
 			}
+			continue
+		}
+		if c == '^' {
+			addTok(Token{Type: TOK_CARET})
+			i++
 			continue
 		}
 		if c == '~' {

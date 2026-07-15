@@ -177,6 +177,15 @@ func TestOperatorSections(t *testing.T) {
 	}
 }
 
+func TestPowAndIndex(t *testing.T) {
+	// ^ : right-assoc, tighter than * ; ! : left-assoc, tighter than + but
+	// looser than application
+	src := "main = (2 ^ 10, 2 ^ 3 ^ 2, 2 * 3 ^ 2, [10,20,30] ! 1, \"hi\" ! 0, [10,20,30] ! 1 + 5, [[1,2],[3,4]] ! 1 ! 0, id [7,8,9] ! 2)\n"
+	if got := evalMain(t, src); got != "(1024,512,18,20,'h',25,3,9)" {
+		t.Errorf("^ and !: got %s", got)
+	}
+}
+
 func TestListPatterns(t *testing.T) {
 	src := `
 describe []        = "empty"

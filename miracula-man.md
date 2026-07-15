@@ -230,7 +230,9 @@ Here is the complete list of prefix and infix operators supported by Miracula, i
 | `==` `~=` `<` `<=` `>` `>=` | comparisons (non-associative: `a < b < c` is a syntax error) |
 | `+` `-` | left associative (addition, subtraction) |
 | `*` `/` `mod` | left associative (multiplication, integer division, modulo — all one level) |
+| `^` | right associative (integer exponentiation: `2 ^ 3 ^ 2` is `2 ^ (3 ^ 2)`) |
 | `.` | right associative (function composition) |
+| `!` | left associative (list subscript: `xs ! n` is the 0-based n-th element) |
 | *juxtaposition* | left associative (function application) |
 | `#` | prefix (list length; applies to one atom: `#xs + 1` is `(#xs) + 1`) |
 | `-` | prefix (unary minus at atom level, e.g. `-x * y` is `(0-x) * y`) |
@@ -257,10 +259,10 @@ miranda> [1,2,3] < [1,3]
 Result: True
 ```
 This makes sorting strings straightforward with `sort_by`.
-- Integer division truncates toward negative infinity (`100 / 3` is `33`); there is no separate `div`. Exponentiation `^` and subscripting `!` are not supported (for subscripting use `vec_get` on a vector).
+- Integer division truncates toward negative infinity (`100 / 3` is `33`); there is no separate `div`. `x ^ y` is integer exponentiation (a negative exponent is a runtime error); `xs ! n` is the 0-based n-th element of a list — `[10,20,30] ! 1` is `20`, `"abc" ! 0` is `'a'`. `!` is O(n); for repeated indexing prefer a vector and `vec_get`. An out-of-range index is a runtime error.
 - Division or modulo by zero raises a runtime error.
 - `->` is tokenised but not part of any construct — lambdas use a dot (`\x. e`), not an arrow.
-- Characters with no meaning to the language (`$`, `%`, `^`, `@`, a lone `!`, braces typed directly, …) are rejected with a positioned parse error:
+- Characters with no meaning to the language (`$`, `%`, `@`, braces typed directly, …) are rejected with a positioned parse error:
 ```
 miranda> a $ b
 <stdin>:1:3: unrecognised character "$"
@@ -618,7 +620,7 @@ Values with no useful textual form print as placeholders: functions as `\x. <clo
 - **Identifiers**: Letters, digits, and underscores, starting with a letter or underscore; lowercase initial for variables, uppercase for constructors (`True`, `False`).
 - **Keywords**: `if`, `then`, `else`, `ifzero`, `mod`, `where` are reserved. `otherwise` is only special inside guard clauses.
 - **Character escapes**: in character literals `'\n'`, `'\t'`, `'\''`, `'\\'`; in string literals `\n`, `\t`, `\"`, `\\`. Any other escaped character stands for itself.
-- **Unrecognised symbols** (`$`, `%`, `^`, `@`, a lone `!`, …) outside strings and comments are a parse error, reported with the exact source position and a caret.
+- **Unrecognised symbols** (`$`, `%`, `@`, …) outside strings and comments are a parse error, reported with the exact source position and a caret.
 
 ---
 
@@ -1115,7 +1117,7 @@ If you already know Miranda, Miracula will feel immediately familiar: lazy evalu
 | --- | --- |
 | floats; arbitrary-precision integers | `num` is a 64-bit signed integer only; overflow wraps silently |
 | `x div y` and float `/` | `/` *is* integer division (floor); there is no `div` |
-| `x ^ y`, `xs ! n` | not supported — use `vec_get (to_vec xs) n` for subscripting |
+| `x ^ y` (float power), `x ^^ y`, `**` | `^` is integer exponentiation (negative exponent is a runtime error); there is no float power |
 | type declarations `f :: num -> num` | parse error — types are inferred only (Hindley–Milner, section 16) |
 | algebraic types `tree ::= Leaf \| Node ...` | not supported; model variants with tuples/tags |
 | type synonyms `string == [char]`, `abstype` | not supported |
@@ -1179,7 +1181,8 @@ Result: True
 | `f x \| x > 0 = e` | `f x = e, if x > 0` (guards come after `=`, Miranda style) |
 | `case e of ...` | not supported — use multi-equation definitions with patterns/guards |
 | `x `div` y` (backticks) | `x / y` (`/` *is* floor integer division; backticks are a lex error) |
-| `xs !! n` | `vec_get (to_vec xs) n` |
+| `xs !! n` | `xs ! n` (Miranda-style, 0-based; `vec_get (to_vec xs) n` for O(1) repeated access) |
+| `x ^ y` (`Int`, `Num`) | `x ^ y` (integer exponentiation; a negative exponent is a runtime error) |
 | `[x \| x <- xs, p x]` | `[x \| x <- xs; p x]` (semicolons between qualifiers) |
 | `zip xs ys` | `zip (xs, ys)` (one tuple argument), or the curried `zip2 xs ys` / `zipWith f xs ys` |
 | `f $ g x` | parens, or flip the flow: `x \|> g \|> f` (`$` is a lex error) |
@@ -1221,8 +1224,8 @@ Admiran and Miracula are sibling Miranda descendants, so a lot transfers directl
 | `\x y -> e` (arrow, multi-var) | `\x. \y. e` (dot, one parameter per lambda; the parameter may be a tuple/cons pattern) |
 | chainable comparisons `a < b < c` | syntax error — write `a < b & b < c` |
 | `x $div y`, `$fn` infix syntax | lex error — `/` *is* floor integer division, `mod` is an infix keyword |
-| `^` power | parse error — none built in; bitwise ops are the builtins `xor`/`band`/`bor`/`shl`/`shr` (section 22) |
-| `xs ! n`, `xs !! n` indexing | `vec_get (to_vec xs) n` |
+| `^` power | `x ^ y` integer exponentiation (a negative exponent is a runtime error); bitwise ops are the builtins `xor`/`band`/`bor`/`shl`/`shr` (section 22) |
+| `xs ! n`, `xs !! n` indexing | `xs ! n` (0-based; `vec_get (to_vec xs) n` for O(1) repeated access) |
 | hex/octal/binary literals `0xff` | **pitfall**: `0xff` lexes as `0` applied to a variable `xff` ("unbound variable: xff") — decimal only |
 | unboxed `42#` values | no unboxed values (`#` is prefix length) |
 | `$` / `$!` application operators | parens or `\|>`; force with `seq` |

@@ -45,6 +45,23 @@ func smlMod(a, b int64) int64 {
 	return r
 }
 
+// intPow is integer exponentiation by squaring (64-bit, overflow wraps).
+// A negative exponent has no integer result and is a runtime error.
+func intPow(base, exp int64) int64 {
+	if exp < 0 {
+		panic(ast.RuntimeError{Msg: fmt.Sprintf("^ negative exponent: %d", exp)})
+	}
+	result := int64(1)
+	for exp > 0 {
+		if exp&1 == 1 {
+			result *= base
+		}
+		base *= base
+		exp >>= 1
+	}
+	return result
+}
+
 func needsThunkCons(n ast.Node) bool {
 	switch n.(type) {
 	case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ThunkNode, ast.ClosureNode, ast.MatchErrorNode:
@@ -1073,6 +1090,35 @@ machine:
 			}
 			conts = append(conts, cont{kind: kProjTuple, mark: len(*pending), idx: node.Index, env: env})
 			n = node.Tuple
+			continue
+		case ast.PowNode:
+			base, ok1 := Whnf(env, node.Left).(ast.IntNode)
+			exp, ok2 := Whnf(env, node.Right).(ast.IntNode)
+			if !ok1 || !ok2 {
+				panic(ast.RuntimeError{Msg: "^ expects integers"})
+			}
+			v = ast.IntNode{Val: intPow(base.Val, exp.Val)}
+		case ast.IndexNode:
+			idxV, ok := Whnf(env, node.Index).(ast.IntNode)
+			if !ok {
+				panic(ast.RuntimeError{Msg: "! expects an integer index"})
+			}
+			if idxV.Val < 0 {
+				panic(ast.RuntimeError{Msg: fmt.Sprintf("! index out of range: %d", idxV.Val)})
+			}
+			curr := node.List
+			for k := int64(0); k < idxV.Val; k++ {
+				cons, isCons := Whnf(env, curr).(ast.ConsNode)
+				if !isCons {
+					panic(ast.RuntimeError{Msg: fmt.Sprintf("! index out of range: %d", idxV.Val)})
+				}
+				curr = cons.Tail
+			}
+			cons, isCons := Whnf(env, curr).(ast.ConsNode)
+			if !isCons {
+				panic(ast.RuntimeError{Msg: fmt.Sprintf("! index out of range: %d", idxV.Val)})
+			}
+			n = cons.Head
 			continue
 		case ast.MatchErrorNode:
 			panic(ast.RuntimeError{Msg: "Pattern matching exhausted"})

@@ -228,6 +228,11 @@ type SubNode struct{ Left, Right Node }
 type MulNode struct{ Left, Right Node }
 type DivNode struct{ Left, Right Node }
 type ModNode struct{ Left, Right Node }
+
+// PowNode is x ^ y (integer exponentiation). IndexNode is xs ! n (0-based list
+// subscript).
+type PowNode struct{ Left, Right Node }
+type IndexNode struct{ List, Index Node }
 type EqNode struct{ Left, Right Node }
 type NeNode struct{ Left, Right Node }
 type LtNode struct{ Left, Right Node }
@@ -263,6 +268,8 @@ func (RangeFromNode) isNode()          {}
 func (RangeStepNode) isNode()          {}
 func (RangeStepFromNode) isNode()      {}
 func (AddNode) isNode()                {}
+func (PowNode) isNode()                {}
+func (IndexNode) isNode()              {}
 func (SubNode) isNode()                {}
 func (MulNode) isNode()                {}
 func (DivNode) isNode()                {}

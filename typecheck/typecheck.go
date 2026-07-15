@@ -692,7 +692,27 @@ func (tc *TypeChecker) inferInternal(env *TypeEnv, node ast.Node, sub Substituti
 		}
 		return sub1.Apply(tTuple.Elems[n.Index]), sub1, nil
 
-	case ast.AddNode, ast.SubNode, ast.MulNode, ast.DivNode, ast.ModNode:
+	case ast.IndexNode:
+		tList, sub1, err := tc.Infer(env, n.List, sub)
+		if err != nil {
+			return nil, nil, err
+		}
+		tIdx, sub2, err := tc.Infer(env, n.Index, sub1)
+		if err != nil {
+			return nil, nil, err
+		}
+		sub3, err := sub2.Unify(tIdx, TInt)
+		if err != nil {
+			return nil, nil, fmt.Errorf("'!' index must be Int: %w", err)
+		}
+		elem := tc.Fresh()
+		sub4, err := sub3.Unify(tList, ListType{Elem: elem})
+		if err != nil {
+			return nil, nil, fmt.Errorf("'!' expects a list: %w", err)
+		}
+		return sub4.Apply(elem), sub4, nil
+
+	case ast.AddNode, ast.SubNode, ast.MulNode, ast.DivNode, ast.ModNode, ast.PowNode:
 		var leftNode, rightNode ast.Node
 		var opName string
 		switch op := n.(type) {
@@ -706,6 +726,8 @@ func (tc *TypeChecker) inferInternal(env *TypeEnv, node ast.Node, sub Substituti
 			leftNode, rightNode, opName = op.Left, op.Right, "/"
 		case ast.ModNode:
 			leftNode, rightNode, opName = op.Left, op.Right, "mod"
+		case ast.PowNode:
+			leftNode, rightNode, opName = op.Left, op.Right, "^"
 		}
 		tL, sub1, err := tc.Infer(env, leftNode, sub)
 		if err != nil {

@@ -606,18 +606,18 @@ func (p *Parser) parseAddSub() ast.Node {
 
 func (p *Parser) parseMod() ast.Node {
 	tok := p.peek()
-	left := p.parseCompose()
+	left := p.parsePow()
 	for {
 		nextTok := p.peek()
 		if nextTok.Type == lexer.TOK_MOD {
 			p.consume()
-			left = p.mark(ast.ModNode{Left: left, Right: p.parseCompose()}, tok)
+			left = p.mark(ast.ModNode{Left: left, Right: p.parsePow()}, tok)
 		} else if nextTok.Type == lexer.TOK_MUL {
 			p.consume()
-			left = p.mark(ast.MulNode{Left: left, Right: p.parseCompose()}, tok)
+			left = p.mark(ast.MulNode{Left: left, Right: p.parsePow()}, tok)
 		} else if nextTok.Type == lexer.TOK_DIV {
 			p.consume()
-			left = p.mark(ast.DivNode{Left: left, Right: p.parseCompose()}, tok)
+			left = p.mark(ast.DivNode{Left: left, Right: p.parsePow()}, tok)
 		} else {
 			break
 		}
@@ -625,9 +625,21 @@ func (p *Parser) parseMod() ast.Node {
 	return p.mark(left, tok)
 }
 
+// parsePow handles exponentiation `x ^ y`, tighter than `* / mod` and
+// right-associative (`2 ^ 3 ^ 2` = `2 ^ (3 ^ 2)`).
+func (p *Parser) parsePow() ast.Node {
+	tok := p.peek()
+	left := p.parseCompose()
+	if p.peek().Type == lexer.TOK_CARET {
+		p.consume()
+		return p.mark(ast.PowNode{Left: left, Right: p.parsePow()}, tok)
+	}
+	return p.mark(left, tok)
+}
+
 func (p *Parser) parseCompose() ast.Node {
 	tok := p.peek()
-	left := p.parseApp()
+	left := p.parseIndex()
 	if p.peek().Type == lexer.TOK_DOT {
 		p.consume()
 		right := p.parseCompose()
@@ -636,6 +648,19 @@ func (p *Parser) parseCompose() ast.Node {
 			Var:  varName,
 			Body: p.mark(ast.AppNode{Left: left, Right: p.mark(ast.AppNode{Left: right, Right: p.mark(ast.VarNode{Name: varName}, tok)}, tok)}, tok),
 		}, tok)
+	}
+	return p.mark(left, tok)
+}
+
+// parseIndex handles the list subscript `xs ! n`, tighter than the arithmetic
+// operators but looser than application (`f xs ! n` is `(f xs) ! n`), and
+// left-associative (`grid ! i ! j`).
+func (p *Parser) parseIndex() ast.Node {
+	tok := p.peek()
+	left := p.parseApp()
+	for p.peek().Type == lexer.TOK_BANG {
+		p.consume()
+		left = p.mark(ast.IndexNode{List: left, Index: p.parseApp()}, tok)
 	}
 	return p.mark(left, tok)
 }
