@@ -7,23 +7,17 @@
 || inputs/day2.txt is seeded with the official example (answers 2 / 4);
 || run fetch-inputs.sh to replace it with your personal puzzle input.
 
-andl [] = True
-andl (b:bs) = b & andl bs
-
-orl [] = False
-orl (b:bs) = b \/ orl bs
-
 diffs (a:b:rest) = (b - a) : diffs (b : rest)
 diffs xs = []
 
-gapsOk ds = andl [1 <= d & d <= 3 | d <- ds]
+gapsOk ds = and [1 <= d & d <= 3 | d <- ds]
 
 safe xs = gapsOk ds \/ gapsOk [0 - d | d <- ds]
           where ds = diffs xs
 
 dropAt i xs = take i xs ++ drop (i + 1) xs
 
-safeDamped xs = safe xs \/ orl [safe (dropAt i xs) | i <- [0 .. length xs - 1]]
+safeDamped xs = safe xs \/ or [safe (dropAt i xs) | i <- [0 .. length xs - 1]]
 
 main = "Advent of Code 2024 - Day 2 Results:\n" ++
        "  Part 1 (safe reports): " ++ show p1 ++ "\n" ++

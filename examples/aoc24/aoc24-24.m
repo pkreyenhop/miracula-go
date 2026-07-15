@@ -13,8 +13,6 @@
 || inputs/day24.txt is seeded with the larger official example (part 1
 || answer 2024); run fetch-inputs.sh for your personal puzzle input.
 
-fstp (a, b) = a
-sndp (a, b) = b
 pow2 0 = 1
 pow2 n = 2 * pow2 (n - 1)
 haschar c [] = False

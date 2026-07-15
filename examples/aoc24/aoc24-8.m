@@ -42,15 +42,12 @@ antinode2 (ra, ca, rb, cb) = walk ra ca
                              walk r c = [], if ~ inside r c
                                       = code r c : walk (r + dr) (c + dc), otherwise
 
-concatAll [] = []
-concatAll (x:xs) = x ++ concatAll xs
-
 toSet codes = foldl s_insert empty_set codes
 s_toList s = [code r c | r <- [0 .. nrows - 1]; c <- [0 .. ncols - 1]; member s (code r c)]
 countSet codes = length (s_toList (toSet codes))
 
-solvePart1 = countSet (concatAll [antinode1 p | p <- pairs])
-solvePart2 = countSet (concatAll [antinode2 p | p <- pairs])
+solvePart1 = countSet (concat [antinode1 p | p <- pairs])
+solvePart2 = countSet (concat [antinode2 p | p <- pairs])
 
 main = "Advent of Code 2024 - Day 8 Results:\n" ++
        "  Part 1 (mirror antinodes): " ++ show solvePart1 ++ "\n" ++

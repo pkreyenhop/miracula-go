@@ -13,16 +13,12 @@
 || inputs/day15.txt is seeded with the large official example (answers
 || 10092 / 9021); run fetch-inputs.sh to replace it with your puzzle input.
 
-fstp (a, b) = a
-sndp (a, b) = b
 haschar c [] = False
 haschar c (x:xs) = if x == c then True else haschar c xs
-concatAll [] = []
-concatAll (x:xs) = x ++ concatAll xs
 
 rawLines = lines (read "examples/aoc24/inputs/day15.txt")
 gridLines = [l | l <- rawLines; haschar '#' l]
-moveStr = concatAll [l | l <- rawLines; ~ haschar '#' l;
+moveStr = concat [l | l <- rawLines; ~ haschar '#' l;
                          haschar '<' l \/ haschar '>' l \/ haschar '^' l \/ haschar 'v' l]
 
 nrows = length gridLines
@@ -57,19 +53,19 @@ step1 (g, (r, c)) mv = state, if npch == '#'
                        where
                        state = (g, (r, c))
                        d = dirOf mv
-                       dr = fstp d
-                       dc = sndp d
+                       dr = fst d
+                       dc = snd d
                        nr = r + dr
                        nc = c + dc
                        np = code1 nr nc
                        npch = h_lookup g np
                        ffp = firstFree1 g nr nc dr dc
-                       ff = code1 (fstp ffp) (sndp ffp)
+                       ff = code1 (fst ffp) (snd ffp)
                        ffch = h_lookup g ff
 
 final1 = foldl step1 (initGrid1, robot1) moveStr
 gps1 = sum [100 * r + c | r <- [0 .. nrows - 1]; c <- [0 .. ncols - 1];
-                          h_lookup (fstp final1) (code1 r c) == 'O']
+                          h_lookup (fst final1) (code1 r c) == 'O']
 
 || ---------------------------------------------------------------- Part 2 ----
 || widen: '#'->"##", 'O'->"[]", '.'->"..", '@'->"@." ; boxes are '[' + ']'
@@ -77,7 +73,7 @@ widen '#' = "##"
 widen 'O' = "[]"
 widen '.' = ".."
 widen '@' = "@."
-wideLines = [concatAll [widen ch | ch <- l] | l <- gridLines]
+wideLines = [concat [widen ch | ch <- l] | l <- gridLines]
 w2 = ncols * 2
 code2 r c = r * w2 + c
 
@@ -130,7 +126,7 @@ gatherV g dr fronts seen
       newBoxes = dedup [(r, boxLeft g r c) | (r, c) <- boxCells]
       freshBoxes = [bx | bx <- newBoxes; ~ elemPair bx seen]
       allBoxes = seen ++ freshBoxes
-      nextFronts = concatAll [[(r + dr, lc), (r + dr, lc + 1)] | (r, lc) <- freshBoxes]
+      nextFronts = concat [[(r + dr, lc), (r + dr, lc + 1)] | (r, lc) <- freshBoxes]
 
 || apply a vertical push: clear all box cells, then redraw shifted by dr
 applyV g dr boxes = redraw cleared
@@ -145,14 +141,14 @@ step2 (g, (r, c)) mv = doHoriz, if dr == 0
                      = doVert, otherwise
                        where
                        d = dirOf mv
-                       dr = fstp d
-                       dc = sndp d
+                       dr = fst d
+                       dc = snd d
                        nr = r + dr
                        nc = c + dc
                        npch = get2 g nr nc
                        || --- horizontal ---
                        ffp = firstFreeH g r (c + dc) dc
-                       ffc = sndp ffp
+                       ffc = snd ffp
                        ffch = get2 g r ffc
                        doHoriz = (g, (r, c)), if npch == '#'
                                = (g, (nr, nc)), if npch == '.'
@@ -160,8 +156,8 @@ step2 (g, (r, c)) mv = doHoriz, if dr == 0
                                = (shiftH g r ffc (c + dc) dc, (nr, nc)), otherwise
                        || --- vertical ---
                        gv = gatherV g dr [(nr, nc)] []
-                       canV = fstp gv
-                       boxesV = sndp gv
+                       canV = fst gv
+                       boxesV = snd gv
                        doVert = (g, (r, c)), if npch == '#'
                               = (g, (nr, nc)), if npch == '.'
                               = (g, (r, c)), if ~ canV
@@ -169,7 +165,7 @@ step2 (g, (r, c)) mv = doHoriz, if dr == 0
 
 final2 = foldl step2 (initGrid2, robot2) moveStr
 gps2 = sum [100 * r + c | r <- [0 .. nrows - 1]; c <- [0 .. w2 - 1];
-                          get2 (fstp final2) r c == '[']
+                          get2 (fst final2) r c == '[']
 
 main = "Advent of Code 2024 - Day 15 Results:\n" ++
        "  Part 1 (GPS sum, narrow): " ++ show gps1 ++ "\n" ++

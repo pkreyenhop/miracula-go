@@ -11,9 +11,6 @@
 || day22-example2.txt is the part 2 example (answer 23). Run fetch-inputs.sh
 || for your personal puzzle input.
 
-fstp (a, b) = a
-sndp (a, b) = b
-
 xorb a b = 0, if a == 0 & b == 0
          = (a mod 2 + b mod 2) mod 2 + 2 * xorb (a / 2) (b / 2), otherwise
 
@@ -46,18 +43,15 @@ firstOccs seed = collect 0 empty_set
                                 = (k, vec_get prs (i + 4)) : collect (i + 1) (s_insert seen k), otherwise
                                   where k = keyAt i
 
-concatAll [] = []
-concatAll (x:xs) = x ++ concatAll xs
-
-allPairs = concatAll [firstOccs s | s <- seeds]
+allPairs = concat [firstOccs s | s <- seeds]
 
 || sum the bananas per change-sequence key, then take the best
 sortedPairs = sort_by cmp allPairs
-              where cmp a b = fstp a - fstp b
+              where cmp a b = fst a - fst b
 
 groupSums [] = []
-groupSums (p:ps) = sum [sndp q | q <- grp] : groupSums (drop (length grp) (p:ps))
-                   where grp = takewhile (\q. fstp q == fstp p) (p:ps)
+groupSums (p:ps) = sum [snd q | q <- grp] : groupSums (drop (length grp) (p:ps))
+                   where grp = takewhile (\q. fst q == fst p) (p:ps)
 
 maxOf [] = 0
 maxOf (x:xs) = foldl mx x xs

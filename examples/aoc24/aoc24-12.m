@@ -8,9 +8,6 @@
 || inputs/day12.txt is seeded with the official example (answers 1930 / 1206);
 || run fetch-inputs.sh to replace it with your personal puzzle input.
 
-fstp (a, b) = a
-sndp (a, b) = b
-
 gls = [l | l <- lines (read "examples/aoc24/inputs/day12.txt"); l ~= ""]
 grid = to_vec [to_vec l | l <- gls]
 nrows = vec_len grid
@@ -69,8 +66,8 @@ regions = go 0 0 empty_set []
                 where
                 ch = cellAt r c
                 fr = flood r c ch seen
-                seen2 = fstp fr
-                cells = sndp fr
+                seen2 = fst fr
+                cells = snd fr
                 area = length cells
                 perim = sum [cellPerim cr cc ch | (cr, cc) <- cells]
                 sides = sum [cellCorners cr cc ch | (cr, cc) <- cells]

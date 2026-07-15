@@ -11,8 +11,6 @@
 || inputs/day23.txt is seeded with the official example (answers 7 /
 || "co,de,ka,ta"); run fetch-inputs.sh for your personal puzzle input.
 
-fstp (a, b) = a
-sndp (a, b) = b
 alphabet = "abcdefghijklmnopqrstuvwxyz"
 posFrom n c [] = 0 - 1
 posFrom n c (x:xs) = if x == c then n else posFrom (n + 1) c xs
@@ -28,8 +26,6 @@ edges = [(nodeCode (hd parts), nodeCode (hd (tl parts))) | l <- edgeLines;
 
 concatE [] = []
 concatE ((u, v):es) = (u, v) : (v, u) : concatE es
-concatAll [] = []
-concatAll (x:xs) = x ++ concatAll xs
 
 || neighbour set per node (both directions), and the node list
 nsetMap = foldl add empty_map (concatE edges)
@@ -38,7 +34,7 @@ nsetMap = foldl add empty_map (concatE edges)
 nset n = h_lookup_def nsetMap n empty_set
 adj u v = member (nset u) v
 
-nodeSet = foldl s_insert empty_set (concatAll [[u, v] | (u, v) <- edges])
+nodeSet = foldl s_insert empty_set (concat [[u, v] | (u, v) <- edges])
 allNodes = [n | n <- [0 .. 675]; member nodeSet n]
 neighList n = [m | m <- allNodes; member (nset n) m]
 
@@ -59,7 +55,7 @@ longer a b = if length a >= length b then a else b
 || vertices adjacent to everything in r). A single self-recursive function
 || sidesteps the interpreter's mutual-recursion and accumulator bugs; the max
 || clique is then the longest one produced.
-cliques r p = r : concatAll [cliques (r ++ [v]) [w | w <- p; w > v; adj v w] | v <- p]
+cliques r p = r : concat [cliques (r ++ [v]) [w | w <- p; w > v; adj v w] | v <- p]
 
 allCliques = cliques [] allNodes
 maxClique = foldl longer [] allCliques

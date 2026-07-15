@@ -9,9 +9,6 @@
 || the seeded part 1 example is 161 as well only by coincidence of content -
 || run fetch-inputs.sh for your personal puzzle input.
 
-fstp (a, b) = a
-sndp (a, b) = b
-
 posFrom n c [] = 0 - 1
 posFrom n c (x:xs) = if x == c then n else posFrom (n + 1) c xs
 
@@ -41,8 +38,8 @@ solvePart1 [] = 0
 solvePart1 s = if v >= 0 then v + solvePart1 rest else solvePart1 (tl s)
                where
                mr = tryMul s
-               v = fstp mr
-               rest = sndp mr
+               v = fst mr
+               rest = snd mr
 
 || scan with an enabled flag toggled by do() / don't()
 scan2 on [] = 0
@@ -52,8 +49,8 @@ scan2 on s = scan2 True (drop 4 s), if starts "do()" s
            = scan2 on (tl s), otherwise
              where
              mr = tryMul s
-             v = fstp mr
-             rest = sndp mr
+             v = fst mr
+             rest = snd mr
 
 solvePart2 s = scan2 True s
 

@@ -9,9 +9,6 @@
 || inputs/day25.txt is seeded with the official example (answer 3); run
 || fetch-inputs.sh for your personal puzzle input.
 
-fstp (a, b) = a
-sndp (a, b) = b
-
 rawLines = lines (read "examples/aoc24/inputs/day25.txt")
 
 nonEmpty l = l ~= ""
@@ -34,9 +31,7 @@ locks = [heights g | g <- groups; isLock g]
 keys = [heights g | g <- groups; ~ isLock g]
 
 || a lock and key fit if every column pair sums to at most 5
-andl [] = True
-andl (b:bs) = b & andl bs
-fits l k = andl [a + b <= 5 | (a, b) <- zip (l, k)]
+fits l k = and [a + b <= 5 | (a, b) <- zip (l, k)]
 
 solvePart1 = length [1 | l <- locks; k <- keys; fits l k]
 

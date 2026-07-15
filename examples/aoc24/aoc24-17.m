@@ -12,9 +12,6 @@
 || 4,6,3,5,6,3,5,2,1,0); day17-example2.txt is the part 2 example (answer
 || 117440). Run fetch-inputs.sh for your personal puzzle input.
 
-fstp (a, b) = a
-sndp (a, b) = b
-
 || bitwise xor of two non-negative integers
 xorb a b = 0, if a == 0 & b == 0
          = (a mod 2 + b mod 2) mod 2 + 2 * xorb (a / 2) (b / 2), otherwise

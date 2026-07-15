@@ -17,9 +17,6 @@
 size = 7
 take1 = 12
 
-fstp (a, b) = a
-sndp (a, b) = b
-
 || byte coordinates in fall order, as (x, y); code = y*size + x
 byteNums = parse_ints (read "examples/aoc24/inputs/day18.txt")
 pairUp [] = []

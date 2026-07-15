@@ -4,9 +4,6 @@
 || union-find (a pair whose endpoints are already connected still consumes
 || one of the 1000 slots), then multiply the three largest circuit sizes.
 
-fst (a, b) = a
-snd (a, b) = b
-
 fst3 (a, b, c) = a
 snd3 (a, b, c) = b
 thd3 (a, b, c) = c

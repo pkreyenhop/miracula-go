@@ -15,8 +15,6 @@ not False = True
 not_empty l = l ~= ""
 
 || Part 1
-product [] = 1
-product (x:xs) = x * product xs
 
 apply_op op nums = if op == "+" then sum nums else product nums
 
@@ -55,10 +53,6 @@ max_val (x:xs) = if x > m then x else m
                  m = max_val xs
 
 len_show x = length (show x)
-
-transpose [] = []
-transpose ([]:xs) = []
-transpose xss = map hd xss : transpose (map tl xss)
 
 not_zero_char c = c ~= '0'
 

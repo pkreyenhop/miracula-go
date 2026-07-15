@@ -9,9 +9,6 @@
 || inputs/day11.txt is seeded with the official example (part 1 answer 55312);
 || run fetch-inputs.sh to replace it with your personal puzzle input.
 
-fstp (a, b) = a
-sndp (a, b) = b
-
 ndigits n = if n < 10 then 1 else 1 + ndigits (n / 10)
 pow10 0 = 1
 pow10 k = 10 * pow10 (k - 1)
@@ -29,21 +26,21 @@ count stone steps memo
       nd = ndigits stone
       half = pow10 (nd / 2)
       res = zero, if stone == 0
-          = (fstp lr + fstp rr, sndp rr), if nd mod 2 == 0
+          = (fst lr + fst rr, snd rr), if nd mod 2 == 0
           = count (stone * 2024) (steps - 1) memo, otherwise
       zero = count 1 (steps - 1) memo
       lr = count (stone / half) (steps - 1) memo
-      rr = count (stone mod half) (steps - 1) (sndp lr)
-      total = fstp res
-      m2 = sndp res
+      rr = count (stone mod half) (steps - 1) (snd lr)
+      total = fst res
+      m2 = snd res
 
 || sum counts over all starting stones, threading the memo across them
 sumStones [] steps memo acc = acc
 sumStones (s:ss) steps memo acc = sumStones ss steps m2 (acc + c)
                                   where
                                   r = count s steps memo
-                                  c = fstp r
-                                  m2 = sndp r
+                                  c = fst r
+                                  m2 = snd r
 
 stones = parse_ints (read "examples/aoc24/inputs/day11.txt")
 

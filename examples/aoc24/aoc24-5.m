@@ -7,9 +7,6 @@
 || inputs/day5.txt is seeded with the official example (answers 143 / 123);
 || run fetch-inputs.sh to replace it with your personal puzzle input.
 
-andl [] = True
-andl (b:bs) = b & andl bs
-
 haschar c [] = False
 haschar c (x:xs) = if x == c then True else haschar c xs
 
@@ -24,7 +21,7 @@ updates = [parse_ints l | l <- alllines; haschar ',' l]
 
 || ordered when no later page must come before an earlier one
 orderedp [] = True
-orderedp (x:xs) = andl [~ member rules (y * 1000 + x) | y <- xs] & orderedp xs
+orderedp (x:xs) = and [~ member rules (y * 1000 + x) | y <- xs] & orderedp xs
 
 byRules a b = 0 - 1, if member rules (a * 1000 + b)
             = 1, if member rules (b * 1000 + a)

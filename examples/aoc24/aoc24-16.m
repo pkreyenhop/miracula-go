@@ -14,8 +14,6 @@
 || fetch-inputs.sh to replace day16.txt with your personal puzzle input.
 
 big = 1000000000
-fstp (a, b) = a
-sndp (a, b) = b
 
 gls = [l | l <- lines (read "examples/aoc24/inputs/day16.txt"); l ~= ""]
 grid = to_vec [to_vec l | l <- gls]
@@ -60,9 +58,9 @@ transB s = turns ++ back
 
 || ordered-list "priority queue" of (cost, state)
 insSorted pr [] = [pr]
-insSorted pr (q:qs) = pr : q : qs, if fstp pr <= fstp q
+insSorted pr (q:qs) = pr : q : qs, if fst pr <= fst q
                     = q : insSorted pr qs, otherwise
-distIns m pr = h_insert m (sndp pr) (fstp pr)
+distIns m pr = h_insert m (snd pr) (fst pr)
 frIns fr pr = insSorted pr fr
 
 || Dijkstra from the given start states; returns the settled distance map
@@ -75,15 +73,15 @@ dijkstra trans starts = loop frontier0 dist0
                             = loop rest dist, if cost > h_lookup_def dist st big
                             = loop frontier2 dist2, otherwise
                               where
-                              cost = fstp pq
-                              st = sndp pq
+                              cost = fst pq
+                              st = snd pq
                               relaxed = [(cost + w, ns) | (w, ns) <- trans st;
                                                           cost + w < h_lookup_def dist ns big]
                               dist2 = foldl distIns dist relaxed
                               frontier2 = foldl frIns rest relaxed
 
-distF = dijkstra transF [enc (fstp startP) (sndp startP) 0]
-endStates = [enc (fstp endP) (sndp endP) d | d <- [0 .. 3]]
+distF = dijkstra transF [enc (fst startP) (snd startP) 0]
+endStates = [enc (fst endP) (snd endP) d | d <- [0 .. 3]]
 best = foldl mn big [h_lookup_def distF s big | s <- endStates]
        where mn a b = if b < a then b else a
 

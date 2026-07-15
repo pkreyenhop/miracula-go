@@ -7,9 +7,6 @@
 || inputs/day7.txt is seeded with the official example (answers 3749 / 11387);
 || run fetch-inputs.sh to replace it with your personal puzzle input.
 
-orl [] = False
-orl (b:bs) = b \/ orl bs
-
 || concat a b : digits of b appended to a, e.g. 12 `cat` 345 = 12345
 pow10 n = if n < 10 then 10 else 10 * pow10 (n / 10)
 cat a b = a * pow10 b + b

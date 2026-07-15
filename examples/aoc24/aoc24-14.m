@@ -16,9 +16,6 @@
 width = 11
 height = 7
 
-fstp (a, b) = a
-sndp (a, b) = b
-
 posmod a m = ((a mod m) + m) mod m
 
 || each line -> (px, py, vx, vy)
@@ -42,8 +39,8 @@ solvePart1 = safety 100
 
 || the frame with the lowest safety factor (the tree, on the real grid)
 best = hd (sort_by cmp [(safety t, t) | t <- [0 .. width * height - 1]])
-       where cmp p qq = fstp p - fstp qq
-solvePart2 = sndp best
+       where cmp p qq = fst p - fst qq
+solvePart2 = snd best
 
 main = "Advent of Code 2024 - Day 14 Results:\n" ++
        "  Part 1 (safety factor after 100s): " ++ show solvePart1 ++ "\n" ++

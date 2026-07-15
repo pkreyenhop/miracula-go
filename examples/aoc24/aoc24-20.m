@@ -18,9 +18,6 @@
 
 threshold = 100
 
-fstp (a, b) = a
-sndp (a, b) = b
-
 gls = [l | l <- lines (read "examples/aoc24/inputs/day20.txt"); l ~= ""]
 grid = to_vec [to_vec l | l <- gls]
 nrows = vec_len grid
@@ -33,7 +30,7 @@ track r c = inb r c & cellAt r c ~= '#'
 findCh ch = hd [(r, c) | r <- [0 .. nrows - 1]; c <- [0 .. ncols - 1]; cellAt r c == ch]
 startP = findCh 'S'
 endP = findCh 'E'
-eCode = code (fstp endP) (sndp endP)
+eCode = code (fst endP) (snd endP)
 
 || walk the single corridor from S to E, tagging each cell with its distance
 pathFrom r c pr pc step
@@ -43,10 +40,10 @@ pathFrom r c pr pc step
            = pathFrom nr nc r c (step + 1), otherwise
       nxt = hd [(ar, ac) | (ar, ac) <- [(r-1,c),(r+1,c),(r,c-1),(r,c+1)];
                            track ar ac; ~ (ar == pr & ac == pc)]
-      nr = fstp nxt
-      nc = sndp nxt
+      nr = fst nxt
+      nc = snd nxt
 
-path = pathFrom (fstp startP) (sndp startP) (0 - 1) (0 - 1) 0
+path = pathFrom (fst startP) (snd startP) (0 - 1) (0 - 1) 0
 distMap = foldl ins empty_map path
           where ins m (r, c, d) = h_insert m (code r c) d
 

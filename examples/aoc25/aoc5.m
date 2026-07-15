@@ -23,9 +23,6 @@ qsort (x:xs) = qsort [y | y <- xs; get_start y < get_start x] ++ [x] ++ qsort [y
 || Interval merging
 max a b = if a > b then a else b
 
-fst (a, b) = a
-snd (a, b) = b
-
 merge [] = []
 merge (x:xs) = if xs == [] then [x] else (if s2 <= e1 + 1 then merge ((s1, max e1 (snd (hd xs))) : tl xs) else x : merge xs)
                where

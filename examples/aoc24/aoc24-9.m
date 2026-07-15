@@ -8,8 +8,6 @@
 || inputs/day9.txt is seeded with the official example (answers 1928 / 2858);
 || run fetch-inputs.sh to replace it with your personal puzzle input.
 
-fstp (a, b) = a
-sndp (a, b) = b
 posFrom n c [] = 0 - 1
 posFrom n c (x:xs) = if x == c then n else posFrom (n + 1) c xs
 digitv c = posFrom 0 c "0123456789"
@@ -25,14 +23,14 @@ segs even pos fid (d:ds) = (file : files, gaps), if even
                          = (files, gaps2), otherwise
                            where
                            rest = segs (~ even) (pos + d) (if even then fid + 1 else fid) ds
-                           files = fstp rest
-                           gaps = sndp rest
+                           files = fst rest
+                           gaps = snd rest
                            file = (fid, pos, d)
                            gaps2 = if d == 0 then gaps else (pos, d) : gaps
 
 allsegs = segs True 0 0 digits
-files = fstp allsegs
-gaps = sndp allsegs
+files = fst allsegs
+gaps = snd allsegs
 
 || checksum of a file id occupying [start, start+len)
 fchk fid start len = fid * (len * start + len * (len - 1) / 2)
@@ -70,8 +68,8 @@ place flen fstart ((s, l):rest)
     = (ps, (s, l):rest2), otherwise
       where
       pr = place flen fstart rest
-      ps = fstp pr
-      rest2 = sndp pr
+      ps = fst pr
+      rest2 = snd pr
 
 || fold files high id to low, threading the gap list, summing the checksum
 moveFiles [] gs acc = acc
@@ -80,8 +78,8 @@ moveFiles ((fid, pos, len):fs) gs acc
     = moveFiles fs gs2 (acc + fchk fid ns len), otherwise
       where
       pr = place len pos gs
-      ns = fstp pr
-      gs2 = sndp pr
+      ns = fst pr
+      gs2 = snd pr
 
 revfiles = reverse files
 solvePart2 = moveFiles revfiles gaps 0

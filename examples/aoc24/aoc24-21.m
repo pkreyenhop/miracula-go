@@ -15,15 +15,11 @@
 || inputs/day21.txt is seeded with the official example (part 1 answer 126384);
 || run fetch-inputs.sh for your personal puzzle input.
 
-fstp (a, b) = a
-sndp (a, b) = b
 absn n = if n < 0 then 0 - n else n
 posFrom n c [] = 0 - 1
 posFrom n c (x:xs) = if x == c then n else posFrom (n + 1) c xs
 replicate v 0 = []
 replicate v n = v : replicate v (n - 1)
-concatAll [] = []
-concatAll (x:xs) = x ++ concatAll xs
 
 || ---- keypad geometry ----------------------------------------------------
 || numeric keypad positions (row, col); gap at (3,0)
@@ -63,10 +59,10 @@ dedup (x:xs) = x : dedup [y | y <- xs; y ~= x]
 || the (one or two) gap-avoiding shortest move strings between two positions
 pathsBetween fp tp gap = dedup [p | p <- [cand1, cand2]; okPath fp p gap]
                          where
-                         fr = fstp fp
-                         fc = sndp fp
-                         tr = fstp tp
-                         tc = sndp tp
+                         fr = fst fp
+                         fc = snd fp
+                         tr = fst tp
+                         tc = snd tp
                          vch = if tr > fr then 'v' else '^'
                          hch = if tc > fc then '>' else '<'
                          vmoves = replicate vch (absn (tr - fr))
@@ -99,14 +95,14 @@ allDpairs = [(a, b) | a <- dirButtons; b <- dirButtons]
 || cost of typing string `s` on a directional keypad, given the table `tbl` for
 || the keypad one level up (sum the per-move costs of A:s). NB `seq` is a
 || builtin and cannot be used as a parameter name.
-seqOnTbl s tbl = sum [h_lookup tbl (pkey (fstp pr) (sndp pr)) | pr <- pairize ('A' : s)]
+seqOnTbl s tbl = sum [h_lookup tbl (pkey (fst pr) (snd pr)) | pr <- pairize ('A' : s)]
 
 cost0 a b = length (hd (dpaths a b)) + 1
-ins0 m ab = h_insert m (pkey (fstp ab) (sndp ab)) (cost0 (fstp ab) (sndp ab))
+ins0 m ab = h_insert m (pkey (fst ab) (snd ab)) (cost0 (fst ab) (snd ab))
 tbl0 = foldl ins0 empty_map allDpairs
 
 bestMove prev a b = minList [seqOnTbl (p ++ "A") prev | p <- dpaths a b]
-insStep prev m ab = h_insert m (pkey (fstp ab) (sndp ab)) (bestMove prev (fstp ab) (sndp ab))
+insStep prev m ab = h_insert m (pkey (fst ab) (snd ab)) (bestMove prev (fst ab) (snd ab))
 step prev = foldl (insStep prev) empty_map allDpairs
 
 nthT 0 (x:xs) = x
@@ -116,7 +112,7 @@ tableForLevels levels = nthT (levels - 1) tables
 
 || a numeric-keypad move expands to directional presses typed on the first
 || dirpad, which has (levels - 1) further dirpads above it
-codeCost code levels = sum [minList [seqOnTbl (p ++ "A") tbl | p <- npaths (fstp pr) (sndp pr)]
+codeCost code levels = sum [minList [seqOnTbl (p ++ "A") tbl | p <- npaths (fst pr) (snd pr)]
                             | pr <- pairize ('A' : code)]
                        where tbl = tableForLevels levels
 

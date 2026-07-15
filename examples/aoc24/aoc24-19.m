@@ -9,9 +9,6 @@
 || inputs/day19.txt is seeded with the official example (answers 6 / 16);
 || run fetch-inputs.sh to replace it with your personal puzzle input.
 
-fstp (a, b) = a
-sndp (a, b) = b
-
 rawLines = [l | l <- lines (read "examples/aoc24/inputs/day19.txt"); l ~= ""]
 patterns = split ", " (hd rawLines)
 designs = tl rawLines
@@ -31,21 +28,21 @@ ways s memo = (1, memo), if s == ""
               where
               cached = h_lookup_def memo s (0 - 1)
               gr = gather patterns memo
-              total = sum (fstp gr)
-              m2 = sndp gr
+              total = sum (fst gr)
+              m2 = snd gr
               gather [] mm = ([], mm)
-              gather (p:ps) mm = gather ps mm, if ~ fstp sp
+              gather (p:ps) mm = gather ps mm, if ~ fst sp
                                = (cnt : restCounts, m4), otherwise
                                  where
                                  sp = stripPrefix p s
-                                 wr = ways (sndp sp) mm
-                                 cnt = fstp wr
-                                 tr = gather ps (sndp wr)
-                                 restCounts = fstp tr
-                                 m4 = sndp tr
+                                 wr = ways (snd sp) mm
+                                 cnt = fst wr
+                                 tr = gather ps (snd wr)
+                                 restCounts = fst tr
+                                 m4 = snd tr
 
 || a fresh memo per design (their suffixes rarely overlap); count via sum
-waysOf d = fstp (ways d empty_map)
+waysOf d = fst (ways d empty_map)
 counts = [waysOf d | d <- designs]
 
 solvePart1 = length [1 | c <- counts; c > 0]
