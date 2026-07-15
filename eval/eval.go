@@ -303,6 +303,83 @@ func isTrueNode(n ast.Node) bool {
 	return false
 }
 
+// cmp gives a structural ordering used by <, >, <=, >= : -1 if v1 < v2, 0 if
+// equal, 1 if v1 > v2. Integers and characters compare by value, False < True,
+// lists compare lexicographically (with [] before any non-empty list), and
+// tuples compare element-wise left to right. Operands are already in WHNF;
+// list/tuple components are forced as they are visited, exactly like eq.
+func cmp(env *ast.Env, v1, v2 ast.Node) int {
+	for {
+		switch x1 := v1.(type) {
+		case ast.IntNode:
+			if x2, ok := v2.(ast.IntNode); ok {
+				return cmpInt64(x1.Val, x2.Val)
+			}
+		case ast.CharNode:
+			if x2, ok := v2.(ast.CharNode); ok {
+				return cmpInt64(int64(x1.Val), int64(x2.Val))
+			}
+		case ast.BoolNode:
+			if x2, ok := v2.(ast.BoolNode); ok {
+				return cmpInt64(boolOrd(x1.Val), boolOrd(x2.Val))
+			}
+		case ast.NilNode:
+			switch v2.(type) {
+			case ast.NilNode:
+				return 0
+			case ast.ConsNode:
+				return -1
+			}
+		case ast.ConsNode:
+			switch x2 := v2.(type) {
+			case ast.NilNode:
+				return 1
+			case ast.ConsNode:
+				if c := cmp(env, Whnf(env, x1.Head), Whnf(env, x2.Head)); c != 0 {
+					return c
+				}
+				// walk the tails iteratively so comparing long lists does
+				// not consume one Go stack frame per element
+				v1 = Whnf(env, x1.Tail)
+				v2 = Whnf(env, x2.Tail)
+				continue
+			}
+		case ast.TupleNode:
+			if x2, ok := v2.(ast.TupleNode); ok {
+				n := len(x1.Elems)
+				if len(x2.Elems) < n {
+					n = len(x2.Elems)
+				}
+				for i := 0; i < n; i++ {
+					if c := cmp(env, Whnf(env, x1.Elems[i]), Whnf(env, x2.Elems[i])); c != 0 {
+						return c
+					}
+				}
+				return cmpInt64(int64(len(x1.Elems)), int64(len(x2.Elems)))
+			}
+		}
+		panic(ast.RuntimeError{Msg: fmt.Sprintf("Comparison expects integers, booleans, characters, lists or tuples, got: %s and %s", PrintNode(env, v1), PrintNode(env, v2))})
+	}
+}
+
+func cmpInt64(a, b int64) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func boolOrd(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 func eq(env *ast.Env, v1, v2 ast.Node) bool {
 	for {
 		switch x1 := v1.(type) {
@@ -463,33 +540,33 @@ func evalBinop(env *ast.Env, op ast.Node, v1, v2 ast.Node) ast.Node {
 	case ast.NeNode:
 		return ast.BoolNode{Val: !eq(env, v1, v2)}
 	case ast.LtNode:
-		i1, ok1 := v1.(ast.IntNode)
-		i2, ok2 := v2.(ast.IntNode)
-		if !ok1 || !ok2 {
-			panic(ast.RuntimeError{Msg: "Less-than expects integers"})
+		if i1, ok1 := v1.(ast.IntNode); ok1 {
+			if i2, ok2 := v2.(ast.IntNode); ok2 {
+				return ast.BoolNode{Val: i1.Val < i2.Val}
+			}
 		}
-		return ast.BoolNode{Val: i1.Val < i2.Val}
+		return ast.BoolNode{Val: cmp(env, v1, v2) < 0}
 	case ast.GtNode:
-		i1, ok1 := v1.(ast.IntNode)
-		i2, ok2 := v2.(ast.IntNode)
-		if !ok1 || !ok2 {
-			panic(ast.RuntimeError{Msg: "Greater-than expects integers"})
+		if i1, ok1 := v1.(ast.IntNode); ok1 {
+			if i2, ok2 := v2.(ast.IntNode); ok2 {
+				return ast.BoolNode{Val: i1.Val > i2.Val}
+			}
 		}
-		return ast.BoolNode{Val: i1.Val > i2.Val}
+		return ast.BoolNode{Val: cmp(env, v1, v2) > 0}
 	case ast.LeNode:
-		i1, ok1 := v1.(ast.IntNode)
-		i2, ok2 := v2.(ast.IntNode)
-		if !ok1 || !ok2 {
-			panic(ast.RuntimeError{Msg: "Less-than-or-equal expects integers"})
+		if i1, ok1 := v1.(ast.IntNode); ok1 {
+			if i2, ok2 := v2.(ast.IntNode); ok2 {
+				return ast.BoolNode{Val: i1.Val <= i2.Val}
+			}
 		}
-		return ast.BoolNode{Val: i1.Val <= i2.Val}
+		return ast.BoolNode{Val: cmp(env, v1, v2) <= 0}
 	case ast.GeNode:
-		i1, ok1 := v1.(ast.IntNode)
-		i2, ok2 := v2.(ast.IntNode)
-		if !ok1 || !ok2 {
-			panic(ast.RuntimeError{Msg: "Greater-than-or-equal expects integers"})
+		if i1, ok1 := v1.(ast.IntNode); ok1 {
+			if i2, ok2 := v2.(ast.IntNode); ok2 {
+				return ast.BoolNode{Val: i1.Val >= i2.Val}
+			}
 		}
-		return ast.BoolNode{Val: i1.Val >= i2.Val}
+		return ast.BoolNode{Val: cmp(env, v1, v2) >= 0}
 	}
 	panic(fmt.Sprintf("Internal error: unknown binary operator: %T", op))
 }

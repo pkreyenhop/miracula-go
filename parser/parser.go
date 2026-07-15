@@ -8,10 +8,14 @@ import (
 
 var varCounter int
 
+// newVarName returns a synthetic binding name for desugaring. The leading
+// '$' can never appear in a user identifier (the lexer rejects it), so these
+// names cannot collide with user variables — which would otherwise let a
+// user parameter named e.g. "p1" capture a desugarer-introduced reference.
 func newVarName(prefix string) string {
 	c := varCounter
 	varCounter++
-	return fmt.Sprintf("%s_%d", prefix, c)
+	return fmt.Sprintf("$%s_%d", prefix, c)
 }
 
 type RawBinding struct {
@@ -842,7 +846,7 @@ func DesugarEquations(eqs []RawBinding) ast.Node {
 
 	var paramNames []string
 	for i := 0; i < arity; i++ {
-		paramNames = append(paramNames, fmt.Sprintf("p%d", i))
+		paramNames = append(paramNames, newVarName("p"))
 	}
 
 	var buildDecisionTree func([]RawBinding) ast.Node

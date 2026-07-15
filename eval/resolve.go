@@ -70,13 +70,18 @@ func patVars(p ast.Pat) []string {
 func resolveNode(n ast.Node, scope []string) ast.Node {
 	switch node := n.(type) {
 	case ast.VarNode:
-		if resolverBuiltins[node.Name] {
-			return node
-		}
+		// A local binding (lambda / where / generator) shadows a builtin of
+		// the same name: check lexical scope first, so a where-binding named
+		// e.g. "split" or "member" resolves to that binding, not the builtin.
 		for i := len(scope) - 1; i >= 0; i-- {
 			if scope[i] == node.Name {
 				return ast.LocalVarNode{Depth: len(scope) - 1 - i, Name: node.Name}
 			}
+		}
+		// Not shadowed locally: a builtin name stays a VarNode for the
+		// evaluator to dispatch natively; anything else is a global.
+		if resolverBuiltins[node.Name] {
+			return node
 		}
 		return ast.GlobalVarNode{Name: node.Name}
 	case ast.LamNode:

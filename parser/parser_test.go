@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"strings"
 	"testing"
 	"pkreyenhop.com/miracula-go/ast"
 	"pkreyenhop.com/miracula-go/lexer"
@@ -61,8 +62,10 @@ func TestDesugarEquations(t *testing.T) {
 		t.Fatalf("Expected LamNode at root of desugared equation, got %T", node)
 	}
 
-	if lam.Var != "p0" {
-		t.Errorf("Expected parameter variable to be 'p0', got %s", lam.Var)
+	// synthetic parameter names are '$'-prefixed so they cannot collide with
+	// user identifiers (which may never contain '$')
+	if !strings.HasPrefix(lam.Var, "$p") {
+		t.Errorf("Expected a synthetic '$p' parameter variable, got %s", lam.Var)
 	}
 }
 

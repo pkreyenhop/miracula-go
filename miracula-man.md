@@ -224,6 +224,16 @@ Result: 4
 
 Additional notes:
 - `!=` is accepted as an alias for `~=`.
+- The ordering operators `<`, `<=`, `>`, `>=` are **polymorphic and structural**, like `==`: the two operands must have the same type, and any of `num`, `char`, `bool` (with `False < True`), or lists and tuples built from them may be compared. Lists compare lexicographically (`[]` precedes any non-empty list) and tuples element-wise:
+```miranda
+miranda> 'a' < 'b'
+Result: True
+miranda> "abc" < "abd"
+Result: True
+miranda> [1,2,3] < [1,3]
+Result: True
+```
+This makes sorting strings straightforward with `sort_by`.
 - Integer division truncates toward negative infinity (`100 / 3` is `33`); there is no separate `div`. Exponentiation `^` and subscripting `!` are not supported (for subscripting use `vec_get` on a vector).
 - Division or modulo by zero raises a runtime error.
 - `->` is tokenised but not part of any construct — lambdas use a dot (`\x. e`), not an arrow.
@@ -281,7 +291,18 @@ The following identifiers are predefined in the Miracula stdenv and always in sc
   - other: `memoize`, `list_get`, `list_set`
 - **Library Functions**: `foldl`, `foldr`, `converse`, `sum`, `map`, `filter`, `take`, `drop`, `takewhile`, `iterate`, `repeat`, `zip`
 
-Built-in names are resolved ahead of any local or script definition, so they cannot be shadowed.
+A local binding — a lambda parameter, a `where` binding, or a comprehension generator — **shadows** a built-in of the same name within its scope, so naming a helper `split` or `member` is safe. At the top level the native built-in names above remain reserved: a script definition of the same name does not override the built-in.
+
+```miranda
+demo = a + b
+       where
+       member = 10        || a local binding named like the built-in `member`
+       a = member * 2     || refers to the local, not the built-in
+       b = member + 1
+
+miranda> demo
+Result: 31
+```
 
 ---
 
@@ -785,6 +806,21 @@ miranda> sort_by (\a. \b. b - a) [3,1,2]
 Result: [3,2,1]
 miranda> sort_edges [(1,2,9),(3,4,1)]
 Result: [(3,4,1),(1,2,9)]
+```
+
+Because the ordering operators are polymorphic (section 7), `sort_by` sorts any
+comparable element — strings, tuples, and so on — with a three-way comparator
+built from `<`:
+
+```miranda
+before a b = 0 - 1, if a < b
+           = 1, if b < a
+           = 0, otherwise
+
+miranda> sort_by before ["pear", "fig", "apple", "date"]
+Result: ["apple","date","fig","pear"]
+miranda> sort_by before [(2,1), (1,9), (1,2), (2,0)]
+Result: [(1,2),(1,9),(2,0),(2,1)]
 ```
 
 ## 22.7 Memoization: `memoize`

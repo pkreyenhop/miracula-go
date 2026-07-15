@@ -745,15 +745,14 @@ func (tc *TypeChecker) inferInternal(env *TypeEnv, node ast.Node, sub Substituti
 		if err != nil {
 			return nil, nil, err
 		}
-		sub3, err := sub2.Unify(tL, TInt)
+		// Ordering is polymorphic and structural, like == : the two operands
+		// must have the same type (num, char, bool, or lists/tuples thereof),
+		// and the evaluator compares them lexicographically.
+		sub3, err := sub2.Unify(tL, tR)
 		if err != nil {
-			return nil, nil, fmt.Errorf("operator '%s' expects Int: %w", opName, err)
+			return nil, nil, fmt.Errorf("operator '%s' type error: cannot compare %s and %s", opName, tL, tR)
 		}
-		sub4, err := sub3.Unify(tR, TInt)
-		if err != nil {
-			return nil, nil, fmt.Errorf("operator '%s' expects Int: %w", opName, err)
-		}
-		return TBool, sub4, nil
+		return TBool, sub3, nil
 
 	case ast.AppendNode, ast.DiffNode:
 		var leftNode, rightNode ast.Node
