@@ -56,29 +56,23 @@ transB s = turns ++ back
            pc = c - dcOf d
            back = [(1, enc pr pc d) | passable pr pc]
 
-|| ordered-list "priority queue" of (cost, state)
-insSorted pr [] = [pr]
-insSorted pr (q:qs) = pr : q : qs, if fst pr <= fst q
-                    = q : insSorted pr qs, otherwise
-distIns m pr = h_insert m (snd pr) (fst pr)
-frIns fr pr = insSorted pr fr
+|| Dijkstra from the given start states, using the native priority queue and
+|| tuple-destructuring `let`; returns the settled distance map.
+seedPQ q s = pq_push q 0 s
+seedDist m s = h_insert m s 0
+pushEdge q e = pq_push q (fst e) (snd e)
+relaxEdge m e = h_insert m (snd e) (fst e)
 
-|| Dijkstra from the given start states; returns the settled distance map
-dijkstra trans starts = loop frontier0 dist0
+dijkstra trans starts = loop (foldl seedPQ pq_empty starts) (foldl seedDist empty_map starts)
                         where
-                        frontier0 = foldl frIns [] [(0, s) | s <- starts]
-                        dist0 = foldl distIns empty_map [(0, s) | s <- starts]
-                        loop [] dist = dist
-                        loop (pq:rest) dist
+                        loop pq dist
+                            = dist, if pq_null pq
                             = loop rest dist, if cost > h_lookup_def dist st big
-                            = loop frontier2 dist2, otherwise
+                            = loop (foldl pushEdge rest relaxed) (foldl relaxEdge dist relaxed), otherwise
                               where
-                              cost = fst pq
-                              st = snd pq
+                              (cost, st, rest) = pq_pop pq
                               relaxed = [(cost + w, ns) | (w, ns) <- trans st;
                                                           cost + w < h_lookup_def dist ns big]
-                              dist2 = foldl distIns dist relaxed
-                              frontier2 = foldl frIns rest relaxed
 
 distF = dijkstra transF [enc (fst startP) (snd startP) 0]
 endStates = [enc (fst endP) (snd endP) d | d <- [0 .. 3]]

@@ -5,21 +5,18 @@
 || the four-consecutive-price-change sequence that, summed over all buyers
 || (first occurrence per buyer), yields the most bananas.
 ||
-|| Miracula has no bitwise xor, so "mix" is implemented on the bits (xorb).
+|| "mix" is the native bitwise xor.
 ||
 || inputs/day22.txt is seeded with the part 1 example (answer 37327623);
 || day22-example2.txt is the part 2 example (answer 23). Run fetch-inputs.sh
 || for your personal puzzle input.
 
-xorb a b = 0, if a == 0 & b == 0
-         = (a mod 2 + b mod 2) mod 2 + 2 * xorb (a / 2) (b / 2), otherwise
-
 prune x = x mod 16777216
 step s = s3
          where
-         s1 = prune (xorb s (s * 64))
-         s2 = prune (xorb s1 (s1 / 32))
-         s3 = prune (xorb s2 (s2 * 2048))
+         s1 = prune (xor s (s * 64))
+         s2 = prune (xor s1 (s1 / 32))
+         s3 = prune (xor s2 (s2 * 2048))
 
 seeds = parse_ints (read "examples/aoc24/inputs/day22.txt")
 

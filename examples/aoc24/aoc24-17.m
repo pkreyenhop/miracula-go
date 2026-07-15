@@ -12,10 +12,6 @@
 || 4,6,3,5,6,3,5,2,1,0); day17-example2.txt is the part 2 example (answer
 || 117440). Run fetch-inputs.sh for your personal puzzle input.
 
-|| bitwise xor of two non-negative integers
-xorb a b = 0, if a == 0 & b == 0
-         = (a mod 2 + b mod 2) mod 2 + 2 * xorb (a / 2) (b / 2), otherwise
-
 pow2 0 = 1
 pow2 n = 2 * pow2 (n - 1)
 
@@ -43,11 +39,11 @@ run a0 b0 c0 = reverse (go a0 b0 c0 0 [])
                            = c, if lit == 6
                            = 0, otherwise
                      go2 = go (a / pow2 combo) b c (ip + 2) out, if opcode == 0
-                         = go a (xorb b lit) c (ip + 2) out, if opcode == 1
+                         = go a (xor b lit) c (ip + 2) out, if opcode == 1
                          = go a (combo mod 8) c (ip + 2) out, if opcode == 2
                          = go a b c lit out, if opcode == 3 & a ~= 0
                          = go a b c (ip + 2) out, if opcode == 3
-                         = go a (xorb b c) c (ip + 2) out, if opcode == 4
+                         = go a (xor b c) c (ip + 2) out, if opcode == 4
                          = go a b c (ip + 2) ((combo mod 8) : out), if opcode == 5
                          = go a (a / pow2 combo) c (ip + 2) out, if opcode == 6
                          = go a b (a / pow2 combo) (ip + 2) out, otherwise
