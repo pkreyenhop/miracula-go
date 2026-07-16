@@ -2,6 +2,7 @@ package eval
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"slices"
 	"strconv"
@@ -62,9 +63,53 @@ func intPow(base, exp int64) int64 {
 	return result
 }
 
+// asFloat returns the float64 value of a numeric node — an IntNode promoted to
+// real, or a RealNode as-is. Miranda's `num` unifies the two, so mixed-mode
+// arithmetic and comparison promote the integer operand through here.
+func asFloat(n ast.Node) (float64, bool) {
+	switch t := n.(type) {
+	case ast.IntNode:
+		return float64(t.Val), true
+	case ast.RealNode:
+		return t.Val, true
+	}
+	return 0, false
+}
+
+// isNum reports whether a node is a numeric value (integer or real).
+func isNum(n ast.Node) bool {
+	switch n.(type) {
+	case ast.IntNode, ast.RealNode:
+		return true
+	}
+	return false
+}
+
+// formatReal renders a real for display. An integral value keeps a trailing
+// ".0" (so `4 / 2` prints as `2.0`, visibly a real and not the integer 2);
+// everything else uses the shortest round-trippable form.
+func formatReal(v float64) string {
+	if !math.IsInf(v, 0) && !math.IsNaN(v) && v == math.Trunc(v) && math.Abs(v) < 1e16 {
+		return strconv.FormatFloat(v, 'f', 1, 64)
+	}
+	return strconv.FormatFloat(v, 'g', -1, 64)
+}
+
+// cmpFloat orders two float64s like cmpInt64 (-1/0/1).
+func cmpFloat(a, b float64) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	default:
+		return 0
+	}
+}
+
 func needsThunkCons(n ast.Node) bool {
 	switch n.(type) {
-	case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ThunkNode, ast.ClosureNode, ast.MatchErrorNode:
+	case ast.IntNode, ast.RealNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ThunkNode, ast.ClosureNode, ast.MatchErrorNode:
 		return false
 	}
 	return true
@@ -78,7 +123,7 @@ func needsThunkCons(n ast.Node) bool {
 // (e.g. an accumulator threaded through a long tail-recursive loop).
 func bindArg(env *ast.Env, arg ast.Node) ast.Node {
 	switch r := arg.(type) {
-	case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.ThunkNode, ast.MatchErrorNode:
+	case ast.IntNode, ast.RealNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.ThunkNode, ast.MatchErrorNode:
 		return r
 	case ast.LamNode:
 		return ast.ClosureNode{Var: r.Var, Body: r.Body, Env: env}
@@ -102,7 +147,7 @@ func bindArg(env *ast.Env, arg ast.Node) ast.Node {
 
 func needsThunkTuple(n ast.Node) bool {
 	switch n.(type) {
-	case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ThunkNode, ast.ClosureNode, ast.MatchErrorNode:
+	case ast.IntNode, ast.RealNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ThunkNode, ast.ClosureNode, ast.MatchErrorNode:
 		return false
 	}
 	return true
@@ -217,8 +262,16 @@ func getStringValue(env *ast.Env, node ast.Node) string {
 // stay int64s inside ast.MapKey, so no allocation per map operation.
 func getMapKey(env *ast.Env, node ast.Node) ast.MapKey {
 	v := Whnf(env, node)
-	if i, ok := v.(ast.IntNode); ok {
-		return ast.MapKey{I: i.Val}
+	switch n := v.(type) {
+	case ast.IntNode:
+		return ast.MapKey{I: n.Val}
+	case ast.RealNode:
+		// An integral real shares the integer key path so `2` and `2.0` are the
+		// same key (matching `2 == 2.0`); a fractional real uses a string key.
+		if !math.IsInf(n.Val, 0) && !math.IsNaN(n.Val) && n.Val == math.Trunc(n.Val) && math.Abs(n.Val) < 1e18 {
+			return ast.MapKey{I: int64(n.Val)}
+		}
+		return ast.MapKey{S: formatReal(n.Val), Str: true}
 	}
 	return ast.MapKey{S: getStringValue(env, v), Str: true}
 }
@@ -327,6 +380,18 @@ func isTrueNode(n ast.Node) bool {
 // list/tuple components are forced as they are visited, exactly like eq.
 func cmp(env *ast.Env, v1, v2 ast.Node) int {
 	for {
+		// Numbers compare by value across the int/real boundary: two ints
+		// exactly, otherwise both promoted to real (so `1 < 1.5` works).
+		if isNum(v1) && isNum(v2) {
+			if i1, ok1 := v1.(ast.IntNode); ok1 {
+				if i2, ok2 := v2.(ast.IntNode); ok2 {
+					return cmpInt64(i1.Val, i2.Val)
+				}
+			}
+			a, _ := asFloat(v1)
+			b, _ := asFloat(v2)
+			return cmpFloat(a, b)
+		}
 		switch x1 := v1.(type) {
 		case ast.IntNode:
 			if x2, ok := v2.(ast.IntNode); ok {
@@ -399,6 +464,17 @@ func boolOrd(b bool) int64 {
 
 func eq(env *ast.Env, v1, v2 ast.Node) bool {
 	for {
+		// Numbers compare by value across the int/real boundary (`1 == 1.0`).
+		if isNum(v1) && isNum(v2) {
+			if i1, ok1 := v1.(ast.IntNode); ok1 {
+				if i2, ok2 := v2.(ast.IntNode); ok2 {
+					return i1.Val == i2.Val
+				}
+			}
+			a, _ := asFloat(v1)
+			b, _ := asFloat(v2)
+			return a == b
+		}
 		switch x1 := v1.(type) {
 		case ast.IntNode:
 			if x2, ok := v2.(ast.IntNode); ok {
@@ -512,31 +588,59 @@ type cont struct {
 func evalBinop(env *ast.Env, op ast.Node, v1, v2 ast.Node) ast.Node {
 	switch op.(type) {
 	case ast.AddNode:
-		i1, ok1 := v1.(ast.IntNode)
-		i2, ok2 := v2.(ast.IntNode)
-		if !ok1 || !ok2 {
-			panic(ast.RuntimeError{Msg: "Addition expects integers"})
+		if i1, ok1 := v1.(ast.IntNode); ok1 {
+			if i2, ok2 := v2.(ast.IntNode); ok2 {
+				return ast.IntNode{Val: i1.Val + i2.Val}
+			}
 		}
-		return ast.IntNode{Val: i1.Val + i2.Val}
+		a, ok1 := asFloat(v1)
+		b, ok2 := asFloat(v2)
+		if !ok1 || !ok2 {
+			panic(ast.RuntimeError{Msg: "Addition expects numbers"})
+		}
+		return ast.RealNode{Val: a + b}
 	case ast.SubNode:
-		i1, ok1 := v1.(ast.IntNode)
-		i2, ok2 := v2.(ast.IntNode)
-		if !ok1 || !ok2 {
-			panic(ast.RuntimeError{Msg: "Subtraction expects integers"})
+		if i1, ok1 := v1.(ast.IntNode); ok1 {
+			if i2, ok2 := v2.(ast.IntNode); ok2 {
+				return ast.IntNode{Val: i1.Val - i2.Val}
+			}
 		}
-		return ast.IntNode{Val: i1.Val - i2.Val}
+		a, ok1 := asFloat(v1)
+		b, ok2 := asFloat(v2)
+		if !ok1 || !ok2 {
+			panic(ast.RuntimeError{Msg: "Subtraction expects numbers"})
+		}
+		return ast.RealNode{Val: a - b}
 	case ast.MulNode:
-		i1, ok1 := v1.(ast.IntNode)
-		i2, ok2 := v2.(ast.IntNode)
-		if !ok1 || !ok2 {
-			panic(ast.RuntimeError{Msg: "Multiplication expects integers"})
+		if i1, ok1 := v1.(ast.IntNode); ok1 {
+			if i2, ok2 := v2.(ast.IntNode); ok2 {
+				return ast.IntNode{Val: i1.Val * i2.Val}
+			}
 		}
-		return ast.IntNode{Val: i1.Val * i2.Val}
+		a, ok1 := asFloat(v1)
+		b, ok2 := asFloat(v2)
+		if !ok1 || !ok2 {
+			panic(ast.RuntimeError{Msg: "Multiplication expects numbers"})
+		}
+		return ast.RealNode{Val: a * b}
 	case ast.DivNode:
+		// `/` is Miranda real division: the result is always a real, even for
+		// integer operands (`4 / 2` is `2.0`, `13 / 2` is `6.5`).
+		a, ok1 := asFloat(v1)
+		b, ok2 := asFloat(v2)
+		if !ok1 || !ok2 {
+			panic(ast.RuntimeError{Msg: "Division expects numbers"})
+		}
+		if b == 0 {
+			panic(ast.RuntimeError{Msg: "Division by zero"})
+		}
+		return ast.RealNode{Val: a / b}
+	case ast.IDivNode:
+		// `div` is integer floor division; it requires integer operands.
 		i1, ok1 := v1.(ast.IntNode)
 		i2, ok2 := v2.(ast.IntNode)
 		if !ok1 || !ok2 {
-			panic(ast.RuntimeError{Msg: "Division expects integers"})
+			panic(ast.RuntimeError{Msg: "div expects integers"})
 		}
 		if i2.Val == 0 {
 			panic(ast.RuntimeError{Msg: "Division by zero"})
@@ -546,7 +650,7 @@ func evalBinop(env *ast.Env, op ast.Node, v1, v2 ast.Node) ast.Node {
 		i1, ok1 := v1.(ast.IntNode)
 		i2, ok2 := v2.(ast.IntNode)
 		if !ok1 || !ok2 {
-			panic(ast.RuntimeError{Msg: "Modulo expects integers"})
+			panic(ast.RuntimeError{Msg: "mod expects integers"})
 		}
 		if i2.Val == 0 {
 			panic(ast.RuntimeError{Msg: "Division by zero"})
@@ -597,6 +701,8 @@ func tryQuickEval(env *ast.Env, e ast.Node) (ast.Node, bool) {
 	switch t := e.(type) {
 	case ast.IntNode:
 		return t, true
+	case ast.RealNode:
+		return t, true
 	case ast.BoolNode:
 		return t, true
 	case ast.CharNode:
@@ -635,13 +741,13 @@ func tryQuickEval(env *ast.Env, e ast.Node) (ast.Node, bool) {
 				return nil, false
 			}
 			switch cv := cell.Val.(type) {
-			case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ConsNode, ast.TupleNode, ast.ClosureNode, ast.MapNode, ast.SetNode, ast.VecNode:
+			case ast.IntNode, ast.RealNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ConsNode, ast.TupleNode, ast.ClosureNode, ast.MapNode, ast.SetNode, ast.VecNode:
 				return cv, true
 			}
 			return nil, false
 		}
 		switch gv.(type) {
-		case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode:
+		case ast.IntNode, ast.RealNode, ast.BoolNode, ast.CharNode, ast.NilNode:
 			return gv, true
 		}
 		return nil, false
@@ -664,6 +770,8 @@ func tryQuickEval2(env *ast.Env, e ast.Node) (ast.Node, bool) {
 	case ast.MulNode:
 		return tryQuickBinop(env, e, t.Left, t.Right)
 	case ast.DivNode:
+		return tryQuickBinop(env, e, t.Left, t.Right)
+	case ast.IDivNode:
 		return tryQuickBinop(env, e, t.Left, t.Right)
 	case ast.ModNode:
 		return tryQuickBinop(env, e, t.Left, t.Right)
@@ -711,6 +819,8 @@ machine:
 	dispatch:
 		switch node := n.(type) {
 		case ast.IntNode:
+			v = node
+		case ast.RealNode:
 			v = node
 		case ast.BoolNode:
 			v = node
@@ -819,7 +929,7 @@ machine:
 				switch cell.State {
 				case ast.Evaluated:
 					switch cv := cell.Val.(type) {
-					case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
+					case ast.IntNode, ast.RealNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
 						v = cv
 						break dispatch
 					default:
@@ -851,7 +961,7 @@ machine:
 				switch cell.State {
 				case ast.Evaluated:
 					switch cv := cell.Val.(type) {
-					case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
+					case ast.IntNode, ast.RealNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
 						v = cv
 						break dispatch
 					default:
@@ -878,7 +988,7 @@ machine:
 		case ast.VarNode:
 			name := node.Name
 			switch name {
-			case "hd", "tl", "show", "read", "lines", "numval", "length", "reverse", "seq", "h_lookup", "h_insert", "member", "split", "parse_ints", "list_get", "list_set", "memoize", "sort_by", "sort_ints", "sort_edges", "sort_pts", "h_lookup_def", "s_insert", "to_vec", "vec_get", "vec_set", "vec_len", "vec_to_list", "xor", "band", "bor", "shl", "shr", "memofix", "pq_push", "pq_pop", "pq_null", "ord", "chr":
+			case "hd", "tl", "show", "read", "lines", "numval", "length", "reverse", "seq", "h_lookup", "h_insert", "member", "split", "parse_ints", "list_get", "list_set", "memoize", "sort_by", "sort_ints", "sort_edges", "sort_pts", "h_lookup_def", "s_insert", "to_vec", "vec_get", "vec_set", "vec_len", "vec_to_list", "xor", "band", "bor", "shl", "shr", "memofix", "pq_push", "pq_pop", "pq_null", "ord", "chr", "sqrt", "sin", "cos", "tan", "atan", "exp", "log", "entier":
 				v = node
 			case "empty_map":
 				v = ast.MapNode{Tree: nil}
@@ -923,7 +1033,7 @@ machine:
 				switch cell.State {
 				case ast.Evaluated:
 					switch cv := cell.Val.(type) {
-					case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
+					case ast.IntNode, ast.RealNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
 						v = cv
 						break dispatch
 					default:
@@ -947,7 +1057,7 @@ machine:
 			switch cell.State {
 			case ast.Evaluated:
 				switch cv := cell.Val.(type) {
-				case ast.IntNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
+				case ast.IntNode, ast.RealNode, ast.BoolNode, ast.CharNode, ast.NilNode, ast.ClosureNode, ast.MatchErrorNode:
 					v = cv
 					break dispatch
 				default:
@@ -1092,12 +1202,23 @@ machine:
 			n = node.Tuple
 			continue
 		case ast.PowNode:
-			base, ok1 := Whnf(env, node.Left).(ast.IntNode)
-			exp, ok2 := Whnf(env, node.Right).(ast.IntNode)
-			if !ok1 || !ok2 {
-				panic(ast.RuntimeError{Msg: "^ expects integers"})
+			bv := Whnf(env, node.Left)
+			ev := Whnf(env, node.Right)
+			bi, biok := bv.(ast.IntNode)
+			ei, eiok := ev.(ast.IntNode)
+			if biok && eiok && ei.Val >= 0 {
+				// integer base, non-negative integer exponent → exact integer
+				v = ast.IntNode{Val: intPow(bi.Val, ei.Val)}
+			} else {
+				// any real operand, or a negative exponent → real result
+				// (`2 ^ -1` is `0.5`, `2 ^ 0.5` is `1.414…`), matching Miranda
+				bf, ok1 := asFloat(bv)
+				ef, ok2 := asFloat(ev)
+				if !ok1 || !ok2 {
+					panic(ast.RuntimeError{Msg: "^ expects numbers"})
+				}
+				v = ast.RealNode{Val: math.Pow(bf, ef)}
 			}
-			v = ast.IntNode{Val: intPow(base.Val, exp.Val)}
 		case ast.IndexNode:
 			idxV, ok := Whnf(env, node.Index).(ast.IntNode)
 			if !ok {
@@ -1162,6 +1283,19 @@ machine:
 			n = node.Left
 			continue
 		case ast.DivNode:
+			if lv, qok := tryQuickEval2(env, node.Left); qok {
+				if rv, qok2 := tryQuickEval2(env, node.Right); qok2 {
+					v = evalBinop(env, node, lv, rv)
+					break
+				}
+				conts = append(conts, cont{kind: kBinopRight, mark: len(*pending), node: n, val: lv, env: env})
+				n = node.Right
+				continue
+			}
+			conts = append(conts, cont{kind: kBinopLeft, mark: len(*pending), node: n, val: node.Right, env: env})
+			n = node.Left
+			continue
+		case ast.IDivNode:
 			if lv, qok := tryQuickEval2(env, node.Left); qok {
 				if rv, qok2 := tryQuickEval2(env, node.Right); qok2 {
 					v = evalBinop(env, node, lv, rv)
@@ -1796,9 +1930,18 @@ func applyBuiltin(env *ast.Env, name string, node ast.AppNode) ast.Node {
 			}
 			return r
 		}, s)
+		// A token carrying a decimal point or exponent is a real; otherwise an
+		// integer, exactly as the lexer classifies numeric literals.
+		if strings.ContainsAny(sTrimmed, ".eE") {
+			r, err := strconv.ParseFloat(sTrimmed, 64)
+			if err != nil {
+				panic(ast.RuntimeError{Msg: "numval: invalid number: " + s})
+			}
+			return ast.RealNode{Val: r}
+		}
 		v, err := strconv.ParseInt(sTrimmed, 10, 64)
 		if err != nil {
-			panic(ast.RuntimeError{Msg: "numval: invalid integer: " + s})
+			panic(ast.RuntimeError{Msg: "numval: invalid number: " + s})
 		}
 		return ast.IntNode{Val: v}
 	case "show":
@@ -1966,6 +2109,36 @@ func applyBuiltin(env *ast.Env, name string, node ast.AppNode) ast.Node {
 			panic(ast.RuntimeError{Msg: "chr: expected an integer"})
 		}
 		return ast.CharNode{Val: rune(i.Val)}
+	case "sqrt", "sin", "cos", "tan", "atan", "exp", "log":
+		x, ok := asFloat(Whnf(env, node.Right))
+		if !ok {
+			panic(ast.RuntimeError{Msg: name + ": expected a number"})
+		}
+		var r float64
+		switch name {
+		case "sqrt":
+			r = math.Sqrt(x)
+		case "sin":
+			r = math.Sin(x)
+		case "cos":
+			r = math.Cos(x)
+		case "tan":
+			r = math.Tan(x)
+		case "atan":
+			r = math.Atan(x)
+		case "exp":
+			r = math.Exp(x)
+		case "log":
+			r = math.Log(x)
+		}
+		return ast.RealNode{Val: r}
+	case "entier":
+		// Miranda's real→integer: the floor, as an integer value.
+		x, ok := asFloat(Whnf(env, node.Right))
+		if !ok {
+			panic(ast.RuntimeError{Msg: "entier: expected a number"})
+		}
+		return ast.IntNode{Val: int64(math.Floor(x))}
 	case "sort_ints":
 		listVal := Whnf(env, node.Right)
 		var elems []int64
@@ -2128,6 +2301,8 @@ func PrintNode(env *ast.Env, n ast.Node) string {
 	switch node := n.(type) {
 	case ast.IntNode:
 		return strconv.FormatInt(node.Val, 10)
+	case ast.RealNode:
+		return formatReal(node.Val)
 	case ast.BoolNode:
 		if node.Val {
 			return "True"
@@ -2213,6 +2388,8 @@ func PrintNode(env *ast.Env, n ast.Node) string {
 		return "(" + PrintNode(env, node.Left) + " * " + PrintNode(env, node.Right) + ")"
 	case ast.DivNode:
 		return "(" + PrintNode(env, node.Left) + " / " + PrintNode(env, node.Right) + ")"
+	case ast.IDivNode:
+		return "(" + PrintNode(env, node.Left) + " div " + PrintNode(env, node.Right) + ")"
 	case ast.DiffNode:
 		return "(" + PrintNode(env, node.Left) + " -- " + PrintNode(env, node.Right) + ")"
 	case ast.EqNode:
@@ -2310,6 +2487,8 @@ func DebugPrintNode(n ast.Node) string {
 	switch node := n.(type) {
 	case ast.IntNode:
 		return fmt.Sprintf("Int(%d)", node.Val)
+	case ast.RealNode:
+		return fmt.Sprintf("Real(%v)", node.Val)
 	case ast.CharNode:
 		return fmt.Sprintf("Char(%q)", node.Val)
 	case ast.NilNode:
@@ -2402,6 +2581,8 @@ func DebugPrintNode(n ast.Node) string {
 		return fmt.Sprintf("Mul(%s, %s)", DebugPrintNode(node.Left), DebugPrintNode(node.Right))
 	case ast.DivNode:
 		return fmt.Sprintf("Div(%s, %s)", DebugPrintNode(node.Left), DebugPrintNode(node.Right))
+	case ast.IDivNode:
+		return fmt.Sprintf("IDiv(%s, %s)", DebugPrintNode(node.Left), DebugPrintNode(node.Right))
 	case ast.ModNode:
 		return fmt.Sprintf("Mod(%s, %s)", DebugPrintNode(node.Left), DebugPrintNode(node.Right))
 	case ast.EqNode:

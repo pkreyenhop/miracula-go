@@ -1,5 +1,8 @@
 || string == [char]
 
+|| the circle constant, as a real (Miranda's `pi`)
+pi = 3.141592653589793
+
 || strict in the accumulator (via seq) so long folds run in constant space
 foldl f z []     = z
 foldl f z (x:xs) = seq z2 (foldl f z2 xs)

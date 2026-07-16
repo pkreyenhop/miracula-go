@@ -58,6 +58,8 @@ const (
 	TOK_CARET
 	TOK_BANG
 	TOK_DCOLON
+	TOK_REAL
+	TOK_IDIV
 	// TOK_ERROR marks a character the lexer does not recognise; the parser
 	// rejects it with a positioned parse error instead of skipping it.
 	TOK_ERROR
@@ -66,6 +68,7 @@ const (
 type Token struct {
 	Type TokenType
 	Int  int64
+	Real float64
 	Str  string
 	Char rune
 	Line int
@@ -338,8 +341,38 @@ func TokenizeWithPos(str string, line int) []Token {
 			for j < size && unicode.IsDigit(runes[j]) {
 				j++
 			}
-			val, _ := strconv.ParseInt(string(runes[i:j]), 10, 64)
-			addTok(Token{Type: TOK_INT, Int: val})
+			// A real literal is `digits . digits` (Miranda requires a digit on
+			// both sides of the point) with an optional `e[+-]?digits`
+			// exponent. The digit-after-the-point guard keeps `3..5` (a range)
+			// and `3 . f` / `f . g` (composition) lexing as before.
+			isReal := false
+			if j+1 < size && runes[j] == '.' && unicode.IsDigit(runes[j+1]) {
+				isReal = true
+				j += 2
+				for j < size && unicode.IsDigit(runes[j]) {
+					j++
+				}
+			}
+			if j < size && (runes[j] == 'e' || runes[j] == 'E') {
+				k := j + 1
+				if k < size && (runes[k] == '+' || runes[k] == '-') {
+					k++
+				}
+				if k < size && unicode.IsDigit(runes[k]) {
+					isReal = true
+					j = k + 1
+					for j < size && unicode.IsDigit(runes[j]) {
+						j++
+					}
+				}
+			}
+			if isReal {
+				rval, _ := strconv.ParseFloat(string(runes[i:j]), 64)
+				addTok(Token{Type: TOK_REAL, Real: rval})
+			} else {
+				val, _ := strconv.ParseInt(string(runes[i:j]), 10, 64)
+				addTok(Token{Type: TOK_INT, Int: val})
+			}
 			i = j
 			continue
 		}
@@ -361,6 +394,8 @@ func TokenizeWithPos(str string, line int) []Token {
 				tokType = TOK_ELSE
 			case "mod":
 				tokType = TOK_MOD
+			case "div":
+				tokType = TOK_IDIV
 			case "where":
 				tokType = TOK_WHERE
 			case "let":
@@ -675,6 +710,10 @@ func TokenToString(t Token) string {
 		return ">="
 	case TOK_MOD:
 		return "mod"
+	case TOK_IDIV:
+		return "div"
+	case TOK_REAL:
+		return strconv.FormatFloat(t.Real, 'g', -1, 64)
 	case TOK_IF:
 		return "if"
 	case TOK_CHAR:

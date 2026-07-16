@@ -14,6 +14,11 @@ type Node interface {
 }
 
 type IntNode struct{ Val int64 }
+
+// RealNode is a floating-point num. Miranda's `num` is a single type inhabited
+// by both integers (IntNode) and reals (RealNode); arithmetic promotes an
+// IntNode to a RealNode whenever the two mix.
+type RealNode struct{ Val float64 }
 type BoolNode struct{ Val bool }
 type CharNode struct{ Val rune }
 type NilNode struct{}
@@ -226,7 +231,8 @@ type ZFGeneratorNode struct {
 type AddNode struct{ Left, Right Node }
 type SubNode struct{ Left, Right Node }
 type MulNode struct{ Left, Right Node }
-type DivNode struct{ Left, Right Node }
+type DivNode struct{ Left, Right Node }  // x / y  — real division (Miranda)
+type IDivNode struct{ Left, Right Node } // x div y — integer floor division
 type ModNode struct{ Left, Right Node }
 
 // PowNode is x ^ y (integer exponentiation). IndexNode is xs ! n (0-based list
@@ -241,6 +247,7 @@ type LeNode struct{ Left, Right Node }
 type GeNode struct{ Left, Right Node }
 
 func (IntNode) isNode()                {}
+func (RealNode) isNode()               {}
 func (BoolNode) isNode()               {}
 func (CharNode) isNode()               {}
 func (NilNode) isNode()                {}
@@ -273,6 +280,7 @@ func (IndexNode) isNode()              {}
 func (SubNode) isNode()                {}
 func (MulNode) isNode()                {}
 func (DivNode) isNode()                {}
+func (IDivNode) isNode()               {}
 func (ModNode) isNode()                {}
 func (EqNode) isNode()                 {}
 func (NeNode) isNode()                 {}

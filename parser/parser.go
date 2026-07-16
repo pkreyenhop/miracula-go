@@ -706,6 +706,9 @@ func (p *Parser) parseMod() ast.Node {
 		} else if nextTok.Type == lexer.TOK_DIV {
 			p.consume()
 			left = p.mark(ast.DivNode{Left: left, Right: p.parsePow()}, tok)
+		} else if nextTok.Type == lexer.TOK_IDIV {
+			p.consume()
+			left = p.mark(ast.IDivNode{Left: left, Right: p.parsePow()}, tok)
 		} else {
 			break
 		}
@@ -758,7 +761,7 @@ func (p *Parser) parseApp() ast.Node {
 	left := p.parseAtom()
 	for {
 		tokApp := p.peek()
-		if tokApp.Type == lexer.TOK_INT || tokApp.Type == lexer.TOK_CHAR || tokApp.Type == lexer.TOK_STRING ||
+		if tokApp.Type == lexer.TOK_INT || tokApp.Type == lexer.TOK_REAL || tokApp.Type == lexer.TOK_CHAR || tokApp.Type == lexer.TOK_STRING ||
 			tokApp.Type == lexer.TOK_VAR || tokApp.Type == lexer.TOK_LPAREN || tokApp.Type == lexer.TOK_LBRACK {
 			left = p.mark(ast.AppNode{Left: left, Right: p.parseAtom()}, tokApp)
 		} else {
@@ -793,6 +796,9 @@ func (p *Parser) parseAtom() ast.Node {
 	case lexer.TOK_INT:
 		p.consume()
 		res = ast.IntNode{Val: tok.Int}
+	case lexer.TOK_REAL:
+		p.consume()
+		res = ast.RealNode{Val: tok.Real}
 	case lexer.TOK_CHAR:
 		p.consume()
 		res = ast.CharNode{Val: tok.Char}

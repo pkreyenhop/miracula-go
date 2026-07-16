@@ -229,8 +229,8 @@ Here is the complete list of prefix and infix operators supported by Miracula, i
 | `++` `--` | right associative (list append, list difference) |
 | `==` `~=` `<` `<=` `>` `>=` | comparisons (a chain `a < b <= c` is a *continued relation*: it desugars to `(a < b) & (b <= c)`) |
 | `+` `-` | left associative (addition, subtraction) |
-| `*` `/` `mod` | left associative (multiplication, integer division, modulo — all one level) |
-| `^` | right associative (integer exponentiation: `2 ^ 3 ^ 2` is `2 ^ (3 ^ 2)`) |
+| `*` `/` `div` `mod` | left associative (multiplication, real division, integer floor division, modulo — all one level) |
+| `^` | right associative (exponentiation: `2 ^ 3 ^ 2` is `2 ^ (3 ^ 2)`) |
 | `.` | right associative (function composition) |
 | `!` | left associative (list subscript: `xs ! n` is the 0-based n-th element) |
 | *juxtaposition* | left associative (function application) |
@@ -262,8 +262,8 @@ miranda> [1,2,3] < [1,3]
 Result: True
 ```
 This makes sorting strings straightforward with `sort_by`.
-- Integer division truncates toward negative infinity (`100 / 3` is `33`); there is no separate `div`. `x ^ y` is integer exponentiation (a negative exponent is a runtime error); `xs ! n` is the 0-based n-th element of a list — `[10,20,30] ! 1` is `20`, `"abc" ! 0` is `'a'`. `!` is O(n); for repeated indexing prefer a vector and `vec_get`. An out-of-range index is a runtime error.
-- Division or modulo by zero raises a runtime error.
+- **`num` is integers and reals** (see section 16). `/` is *real* division and always yields a real: `13 / 2` is `6.5`, `4 / 2` is `2.0`. Integer floor division is `div` (`13 div 2` is `6`, truncating toward negative infinity), and `mod` is the matching remainder; both require integer operands. `x ^ y` is exact integer power when the base and a non-negative integer exponent are both integers, and a real otherwise (`2 ^ 10` is `1024`, `2 ^ -1` is `0.5`, `2 ^ 0.5` is `1.4142…`). `xs ! n` is the 0-based n-th element of a list — `[10,20,30] ! 1` is `20`, `"abc" ! 0` is `'a'`. `!` is O(n); for repeated indexing prefer a vector and `vec_get`. An out-of-range index is a runtime error.
+- Division (`/`, `div`) or `mod` by zero raises a runtime error.
 - `->` is tokenised but not part of any construct — lambdas use a dot (`\x. e`), not an arrow.
 - Characters with no meaning to the language (`$`, `%`, `@`, braces typed directly, …) are rejected with a positioned parse error:
 ```
@@ -306,11 +306,12 @@ ifzero if then else mod where let in
 
 ## Predefined identifiers
 The following identifiers are predefined in the Miracula stdenv and always in scope:
-- **Typenames**: `num` (64-bit integers), `char`, `bool`
+- **Typenames**: `num` (integers and reals), `char`, `bool`
 - **Constructors**: `True`, `False`
 - **Built-in Functions** (implemented natively in Go; see sections 21 and 22):
   - core: `hd`, `tl`, `show`, `read`, `lines`, `numval`, `length`, `reverse`, `seq`
   - characters: `ord` (char → code), `chr` (code → char)
+  - reals: `sqrt`, `sin`, `cos`, `tan`, `atan`, `exp`, `log`, `entier` (real → integer floor), and the constant `pi`
   - string processing: `split`, `parse_ints`
   - maps and sets: `empty_map`, `h_insert`, `h_lookup`, `h_lookup_def`, `empty_set`, `member`
   - vectors: `to_vec`, `vec_get`, `vec_set`, `vec_len`, `vec_to_list`
@@ -337,10 +338,11 @@ Result: 31
 
 # 10. Literals
 
-Miracula supports three kinds of literals:
+Miracula supports four kinds of literals:
 1. **Integers**: Sequences of digits (e.g., `42`). Integers are 64-bit signed throughout the lexer, evaluator, and native parsers.
-2. **Characters**: A single character enclosed in single quotes (e.g., `'a'`).
-3. **Strings**: Sequences of characters enclosed in double quotes (e.g., `"hello"`), which are parsed as lists of character literals.
+2. **Reals**: A digit sequence with a decimal point between digits (`3.14`, `2.0`) or an exponent (`6.022e23`, `1.5e-3`). A digit is required on both sides of the point, so `3..5` still lexes as the range `3 .. 5` and `f . g` as composition — only `digit.digit` starts a real.
+3. **Characters**: A single character enclosed in single quotes (e.g., `'a'`).
+4. **Strings**: Sequences of characters enclosed in double quotes (e.g., `"hello"`), which are parsed as lists of character literals.
 
 ---
 
@@ -577,7 +579,7 @@ The type formers are:
 
 | Type | Meaning | Printed as |
 | --- | --- | --- |
-| `num` | 64-bit signed integer | `Int` |
+| `num` | number — a 64-bit signed **integer** or a floating-point **real** | `Int` |
 | `bool` | `True` / `False` | `Bool` |
 | `char` | character (strings are `[char]`) | `Char` |
 | `[t]` | list of `t` | `[Int]`, `[[Char]]`, … |
@@ -589,6 +591,8 @@ The type formers are:
 | pq | priority queue (min-heap, integer priorities) | `PQ(a)` |
 
 Type variables print as `a`, `b`, `c`, …. Polymorphic definitions are generalised automatically, e.g. the inferred type of `map` is `(a -> b) -> [a] -> [b]`.
+
+**Numbers — `num` is integers *and* reals.** Following Miranda, `num` is a single type inhabited by two runtime forms: a 64-bit signed **integer** (overflow wraps silently) and a floating-point **real** (IEEE-754 double). The distinction is a runtime matter, not a typing one — both are `num`, so no annotation or conversion is needed to mix them. A literal is real when it carries a decimal point (`3.14`, `2.0`) or an exponent (`6.022e23`); otherwise it is an integer. Arithmetic promotes: `+`, `-`, `*` give an integer when both operands are integers and a real as soon as either is real; `/` is **always** real division (`13 / 2` is `6.5`); `div`/`mod`/bitwise ops/`!` indexing require integers. Comparisons and `==` work across the boundary, so `1 == 1.0` is `True` and `1 < 1.5` is `True`. Reals print with a decimal point — an integral real keeps a trailing `.0` (`4 / 2` prints `2.0`) so it is visibly distinct from the integer `2`. The real-valued builtins are `sqrt`, `sin`, `cos`, `tan`, `atan`, `exp`, `log` (each `num -> num`), `entier` (real → integer floor), and the constant `pi`.
 
 A type error looks like:
 

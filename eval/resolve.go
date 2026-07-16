@@ -19,6 +19,8 @@ var resolverBuiltins = map[string]bool{
 	"memofix":  true,
 	"pq_empty": true, "pq_push": true, "pq_pop": true, "pq_null": true,
 	"ord":      true, "chr": true,
+	"sqrt": true, "sin": true, "cos": true, "tan": true, "atan": true,
+	"exp": true, "log": true, "entier": true,
 }
 
 // Resolve rewrites variable references in a freshly desugared definition or
@@ -161,6 +163,8 @@ func resolveNode(n ast.Node, scope []string) ast.Node {
 		return ast.MulNode{Left: resolveNode(node.Left, scope), Right: resolveNode(node.Right, scope)}
 	case ast.DivNode:
 		return ast.DivNode{Left: resolveNode(node.Left, scope), Right: resolveNode(node.Right, scope)}
+	case ast.IDivNode:
+		return ast.IDivNode{Left: resolveNode(node.Left, scope), Right: resolveNode(node.Right, scope)}
 	case ast.ModNode:
 		return ast.ModNode{Left: resolveNode(node.Left, scope), Right: resolveNode(node.Right, scope)}
 	case ast.PowNode:
@@ -180,7 +184,7 @@ func resolveNode(n ast.Node, scope []string) ast.Node {
 	case ast.GeNode:
 		return ast.GeNode{Left: resolveNode(node.Left, scope), Right: resolveNode(node.Right, scope)}
 	default:
-		// literals (Int/Bool/Char/Nil/MatchError) and runtime-only nodes
+		// literals (Int/Real/Bool/Char/Nil/MatchError) and runtime-only nodes
 		return n
 	}
 }

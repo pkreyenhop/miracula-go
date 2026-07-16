@@ -488,6 +488,10 @@ func (tc *TypeChecker) inferInternal(env *TypeEnv, node ast.Node, sub Substituti
 	switch n := node.(type) {
 	case ast.IntNode:
 		return TInt, sub, nil
+	case ast.RealNode:
+		// Miranda unifies integers and reals under one type `num` (TInt here);
+		// the int/real distinction is purely a runtime matter.
+		return TInt, sub, nil
 	case ast.BoolNode:
 		return TBool, sub, nil
 	case ast.CharNode:
@@ -712,7 +716,7 @@ func (tc *TypeChecker) inferInternal(env *TypeEnv, node ast.Node, sub Substituti
 		}
 		return sub4.Apply(elem), sub4, nil
 
-	case ast.AddNode, ast.SubNode, ast.MulNode, ast.DivNode, ast.ModNode, ast.PowNode:
+	case ast.AddNode, ast.SubNode, ast.MulNode, ast.DivNode, ast.IDivNode, ast.ModNode, ast.PowNode:
 		var leftNode, rightNode ast.Node
 		var opName string
 		switch op := n.(type) {
@@ -724,6 +728,8 @@ func (tc *TypeChecker) inferInternal(env *TypeEnv, node ast.Node, sub Substituti
 			leftNode, rightNode, opName = op.Left, op.Right, "*"
 		case ast.DivNode:
 			leftNode, rightNode, opName = op.Left, op.Right, "/"
+		case ast.IDivNode:
+			leftNode, rightNode, opName = op.Left, op.Right, "div"
 		case ast.ModNode:
 			leftNode, rightNode, opName = op.Left, op.Right, "mod"
 		case ast.PowNode:
@@ -1051,6 +1057,11 @@ func DefaultTypeEnv() *TypeEnv {
 	numNumNum := FunType{From: TInt, To: FunType{From: TInt, To: TInt}}
 	env.Map["ord"] = Scheme{Vars: nil, Ty: FunType{From: TChar, To: TInt}}
 	env.Map["chr"] = Scheme{Vars: nil, Ty: FunType{From: TInt, To: TChar}}
+	// num -> num transcendental / real functions; entier floors a real to an int
+	numNum := FunType{From: TInt, To: TInt}
+	for _, fn := range []string{"sqrt", "sin", "cos", "tan", "atan", "exp", "log", "entier"} {
+		env.Map[fn] = Scheme{Vars: nil, Ty: numNum}
+	}
 	env.Map["xor"] = Scheme{Vars: nil, Ty: numNumNum}
 	env.Map["band"] = Scheme{Vars: nil, Ty: numNumNum}
 	env.Map["bor"] = Scheme{Vars: nil, Ty: numNumNum}
