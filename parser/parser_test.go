@@ -107,3 +107,27 @@ func TestParseGuards(t *testing.T) {
 		t.Errorf("Expected BoolNode{Val: true} for otherwise, got %v", elseIfNode.Cond)
 	}
 }
+
+// A definition whose RHS leaves tokens unconsumed must be rejected, not
+// silently truncated. Historically the leftover was dropped, so a stranded
+// operator turned `med x = True, if 1<x<10` (parsed as `1<x` on an old build)
+// into a half-equation with `<10 = False, otherwise` discarded.
+func TestTrailingTokensRejected(t *testing.T) {
+	cases := []string{
+		"is3 3 = True\n=False", // guard-less second clause (the real ~/.script.m case)
+		"f x = x )",            // stray close paren
+		"f x = x, 5",           // comma that is neither `, if` nor `, otherwise`
+	}
+	for _, src := range cases {
+		func() {
+			defer func() {
+				if r := recover(); r == nil {
+					t.Errorf("expected parse error for %q, got none", src)
+				} else if _, ok := r.(ParseError); !ok {
+					t.Errorf("expected ParseError for %q, got %T", src, r)
+				}
+			}()
+			NewParser(lexer.Tokenize(src)).Parse()
+		}()
+	}
+}

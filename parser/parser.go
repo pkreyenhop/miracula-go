@@ -451,6 +451,14 @@ func (p *Parser) Parse() Stmt {
 			pats = append(pats, p.parsePattern())
 		}
 		exprBody := p.parseRHS()
+		// A well-formed definition consumes its whole segment. Any leftover
+		// token means the RHS stopped early — historically these were dropped
+		// silently, so e.g. a stranded operator turned `f x = a, if p` into a
+		// half-parsed equation with the rest discarded. Reject them with a
+		// position instead, matching the REPL-expression branch below.
+		if p.peek().Type != lexer.TOK_EOF {
+			p.errorf("trailing tokens after definition of %q: %s", tok.Str, p.peek().String())
+		}
 		return ScriptBindStmt{Binding: RawBinding{FName: tok.Str, Pats: pats, Body: exprBody}}
 	} else {
 		e := p.parseExpr()
